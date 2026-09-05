@@ -8,13 +8,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Unduh & Ekstrak Proyek Android
+      - name: Ambil File dari Repository
+        uses: actions/checkout@v4
+
+      - name: Ekstrak Proyek Android
         run: |
-          echo "Mengunduh file proyek Android..."
-          curl -L -f -o project.zip "https://ais-pre-whx5yzizrgfyiwu5u6r4wj-464365808003.asia-southeast1.run.app/srcmasngud-android.zip"
-          unzip -q project.zip
+          unzip -q srcmasngud-android.zip
           
-          # Jika hasil ekstrak berada di dalam subfolder android, pindahkan ke root:
+          # Rapikan struktur folder jika berada dalam subfolder android
           if [ -d "android" ]; then
             cp -r android/* .
           fi

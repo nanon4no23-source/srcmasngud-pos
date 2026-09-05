@@ -13,30 +13,24 @@ jobs:
 
       - name: Ekstrak File Zip & Cari Direktori Proyek
         run: |
-          echo "=== Mencari file zip di repo ==="
-          ls -la
-          
-          # Ekstrak file zip apa pun yang ada di repo
           for f in *.zip; do
             if [ -f "$f" ]; then
               echo "Mengekstrak $f..."
-              unzip -q -o "$f"
+              unzip -q -o "$f" -d extracted_temp
             fi
           done
 
-          # Jika package.json ada di dalam subfolder, salin isinya ke folder utama
-          if [ ! -f "package.json" ]; then
-            SUBDIR=$(find . -maxdepth 2 -name "package.json" -exec dirname {} \;)
-            if [ -n "$SUBDIR" ]; then
-              echo "Menemukan proyek di dalam: $SUBDIR, memindahkan ke root..."
-              cp -r $SUBDIR/* .
+          if [ -d "extracted_temp" ]; then
+            PKG_DIR=$(find extracted_temp -name "package.json" -exec dirname {} \; | head -n 1)
+            if [ -n "$PKG_DIR" ]; then
+              echo "Menemukan proyek di: $PKG_DIR, menyalin ke root..."
+              cp -r $PKG_DIR/* .
+              cp -r $PKG_DIR/.* . 2>/dev/null || true
             fi
+            rm -rf extracted_temp
           fi
 
-          echo "=== Memeriksa package.json ==="
-          ls -la package.json
-
-      - name: Setup Node.js
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -44,12 +38,8 @@ jobs:
       - name: Install Dependencies & Build Web
         run: |
           npm install --legacy-peer-deps
+          npm install react-is --legacy-peer-deps
           npm run build
-
-      - name: Siapkan Capacitor Android
-        run: |
-          npx cap add android || true
-          npx cap sync android
 
       - name: Setup Java JDK 17
         uses: actions/setup-java@v4
@@ -57,8 +47,10 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Build APK dengan Gradle
+      - name: Siapkan Capacitor Android & Build APK
         run: |
+          npx cap add android || true
+          npx cap sync android
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon

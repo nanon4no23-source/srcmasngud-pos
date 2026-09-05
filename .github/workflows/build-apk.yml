@@ -41,25 +41,27 @@ jobs:
           npm install react-is --legacy-peer-deps
           npm run build
 
-      - name: Setup Java JDK 17
+      - name: Setup Java JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '17'
+          java-version: '21'
 
-      - name: Setup Gradle Sistem Runner
-        uses: gradle/actions/setup-gradle@v3
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Siapkan Capacitor Android & Build APK
+      - name: Buat Proyek Android Baru & Build APK
         run: |
-          # Sinkronkan kode web terbaru ke Capacitor Android
+          # Hapus folder android lama agar tidak bentrok
+          rm -rf android
+
+          # Tambahkan platform android yang segar sesuai versi terbaru
+          npx cap add android
           npx cap sync android
 
           cd android
-          # Unduh wrapper jar resmi yang valid agar tidak corrupt
-          gradle wrapper --gradle-version 8.2.1
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Simpan File APK ke Artifacts
         uses: actions/upload-artifact@v4

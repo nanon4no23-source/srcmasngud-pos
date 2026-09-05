@@ -1,18 +1,24 @@
 name: Build Android APK Otomatis
 
 on:
-  workflow_dispatch: # Memungkinkan tombol "Run workflow" ditekan kapan saja
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download & Extract Project Android Langsung
+      - name: Unduh & Ekstrak Proyek Android
         run: |
-          echo "Mengunduh paket proyek Android..."
-          curl -L -o project.zip "https://ais-dev-whx5yzizrgfyiwu5u6r4wj-464365808003.asia-southeast1.run.app/srcmasngud-android.zip"
+          echo "Mengunduh file proyek Android..."
+          curl -L -f -o project.zip "https://ais-pre-whx5yzizrgfyiwu5u6r4wj-464365808003.asia-southeast1.run.app/srcmasngud-android.zip"
           unzip -q project.zip
+          
+          # Jika hasil ekstrak berada di dalam subfolder android, pindahkan ke root:
+          if [ -d "android" ]; then
+            cp -r android/* .
+          fi
+          
           chmod +x gradlew
           ls -la
 
@@ -23,7 +29,7 @@ jobs:
           java-version: '17'
 
       - name: Build APK dengan Gradle
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleDebug --no-daemon
 
       - name: Simpan File APK ke Artifacts
         uses: actions/upload-artifact@v4

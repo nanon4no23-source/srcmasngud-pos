@@ -11,10 +11,30 @@ jobs:
       - name: Ambil File dari Repository
         uses: actions/checkout@v4
 
-      - name: Ekstrak Source Code Web
+      - name: Ekstrak File Zip & Cari Direktori Proyek
         run: |
-          unzip -q srcmasngud-full-project.zip
+          echo "=== Mencari file zip di repo ==="
           ls -la
+          
+          # Ekstrak file zip apa pun yang ada di repo
+          for f in *.zip; do
+            if [ -f "$f" ]; then
+              echo "Mengekstrak $f..."
+              unzip -q -o "$f"
+            fi
+          done
+
+          # Jika package.json ada di dalam subfolder, salin isinya ke folder utama
+          if [ ! -f "package.json" ]; then
+            SUBDIR=$(find . -maxdepth 2 -name "package.json" -exec dirname {} \;)
+            if [ -n "$SUBDIR" ]; then
+              echo "Menemukan proyek di dalam: $SUBDIR, memindahkan ke root..."
+              cp -r $SUBDIR/* .
+            fi
+          fi
+
+          echo "=== Memeriksa package.json ==="
+          ls -la package.json
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

@@ -47,19 +47,22 @@ jobs:
           distribution: 'zulu'
           java-version: '21'
 
-      - name: Sinkronkan Web & Pastikan Wrapper Asli & Build APK
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle Resmi
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+
+      - name: Sinkronkan Web & Build APK Debug
         run: |
           # Sinkronkan web terbaru ke Android
           npx cap sync android
 
+          # Masuk ke folder android dan build langsung dengan Gradle resmi (tanpa wrapper jar)
           cd android
-          # Pastikan file jar wrapper resmi yang valid selalu terpasang
-          mkdir -p gradle/wrapper
-          curl -sL -o gradle/wrapper/gradle-wrapper.jar https://raw.githubusercontent.com/gradle/gradle/v8.11.1/gradle/wrapper/gradle-wrapper.jar
-          chmod +x gradlew
-
-          # Jalankan build APK Debug
-          ./gradlew assembleDebug --no-daemon
+          gradle assembleDebug --no-daemon
 
       - name: Simpan File APK ke Artifacts
         uses: actions/upload-artifact@v4

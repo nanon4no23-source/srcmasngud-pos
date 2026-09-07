@@ -12,137 +12,70 @@ permissions:
 
 jobs:
   build:
-    name: Ekstrak ZIP & Build APK
+    name: Build APK SRC MASNGUD
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 1. Checkout Repository
+      - name: 📥 1. Ambil File dari Repository
         uses: actions/checkout@v4
 
-      - name: 📦 2. Ekstrak File ZIP (Otomatis jika ada ZIP di repo)
+      - name: 📦 2. Ekstrak File Zip & Cari Direktori Proyek
         run: |
-          echo "=== MEMERIKSA FILE ZIP PROYEK ==="
-          ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
-          if [ -n "$ZIP_FILE" ]; then
-            echo "Menemukan file zip: $ZIP_FILE"
-            echo "Sedang mengekstrak seluruh file proyek..."
-            unzip -o -q "$ZIP_FILE"
-            echo "Ekstraksi berhasil!"
-          fi
-
-          if [ ! -d "android" ]; then
-            NESTED_ANDROID=$(find . -mindepth 2 -maxdepth 3 -type d -name "android" | head -n 1)
-            if [ -n "$NESTED_ANDROID" ]; then
-              PARENT_DIR=$(dirname "$NESTED_ANDROID")
-              echo "Memindahkan folder dari subdirektori $PARENT_DIR ke root..."
-              cp -rn "$PARENT_DIR"/* . 2>/dev/null || true
+          echo "=== MENGEKSTRAK FILE ZIP PROYEK ==="
+          for f in *.zip; do
+            if [ -f "$f" ]; then
+              echo "Mengekstrak $f..."
+              unzip -q -o "$f" -d extracted_temp
             fi
+          done
+          if [ -d "extracted_temp" ]; then
+            PKG_DIR=$(find extracted_temp -name "package.json" -exec dirname {} \; | head -n 1)
+            if [ -n "$PKG_DIR" ]; then
+              echo "Menemukan proyek di: $PKG_DIR, menyalin ke root..."
+              cp -r $PKG_DIR/* .
+              cp -r $PKG_DIR/.* . 2>/dev/null || true
+            fi
+            rm -rf extracted_temp
           fi
-
           ls -la
 
-      - name: ☕ 3. Setup Java JDK 21
+      - name: 🟢 3. Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 📦 4. Install Dependencies & Build Web
+        run: |
+          npm install --legacy-peer-deps
+          npm install react-is --legacy-peer-deps
+          npm run build
+
+      - name: ☕ 5. Setup Java JDK 21
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: 'zulu'
           java-version: '21'
 
-      - name: 🤖 4. Setup Android SDK
+      - name: 🤖 6. Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: 🐘 7. Setup Gradle Resmi (8.14.3)
+        uses: gradle/actions/setup-gradle@v4
         with:
-          packages: 'platforms;android-35 build-tools;35.0.0'
+          gradle-version: '8.14.3'
 
-      - name: 🟢 5. Install Dependencies & Sinkronisasi Proyek
+      - name: 🔨 8. Sinkronkan Web & Kompilasi APK
         run: |
-          echo "=== MEMPERSIAPKAN MODUL CAPACITOR & GRADLE ==="
-          yes | sdkmanager --licenses 2>/dev/null || true
+          echo "=== MENYINKRONKAN DENGAN CAPACITOR ==="
+          npx cap sync android
+          
+          echo "=== MEMULAI KOMPILASI GRADLE RESMI ==="
+          cd android
+          gradle assembleDebug --no-daemon
 
-          if [ -f "package.json" ]; then
-            npm install --legacy-peer-deps || npm i -D @capacitor/android@8.3.4 @capacitor/core@8.3.4 || true
-          fi
-
-          # Bersihkan sisa package lama jika ada
-          rm -rf android/app/src/main/java/com/arapos 2>/dev/null || true
-
-          # Sinkronisasi capacitor-android
-          mkdir -p android/capacitor-android
-          if [ -d "node_modules/@capacitor/android/capacitor" ]; then
-            cp -rn node_modules/@capacitor/android/capacitor/* android/capacitor-android/ 2>/dev/null || true
-          fi
-
-          # Pastikan capacitor.settings.gradle dapat menemukan modul Capacitor
-          if [ -f "android/capacitor.settings.gradle" ]; then
-            python3 -c "open('android/capacitor.settings.gradle','w').write(\"include ':capacitor-android'\\nif (new File('../node_modules/@capacitor/android/capacitor').exists()) {\\n    project(':capacitor-android').projectDir = new File('../node_modules/@capacitor/android/capacitor')\\n} else {\\n    project(':capacitor-android').projectDir = new File('./capacitor-android')\\n}\\n\")"
-          fi
-
-          # Pastikan cdvPluginPostBuildExtras terdefinisi agar tidak null di cordova-plugins
-          if [ -f "android/capacitor-cordova-android-plugins/cordova.variables.gradle" ]; then
-            grep -q "cdvPluginPostBuildExtras" android/capacitor-cordova-android-plugins/cordova.variables.gradle || echo "ext.cdvPluginPostBuildExtras = []" >> android/capacitor-cordova-android-plugins/cordova.variables.gradle
-          fi
-
-          # Tambahkan konfigurasi unduh SDK otomatis dan alokasi memori ke gradle.properties
-          if [ -f "android/gradle.properties" ]; then
-            sed -i 's/-Xmx1536m/-Xmx2048m/g' android/gradle.properties 2>/dev/null || true
-            grep -q "android.builder.sdkDownload" android/gradle.properties || echo "android.builder.sdkDownload=true" >> android/gradle.properties
-          fi
-
-          # Konfigurasi Java 21 di build.gradle
-          if [ -f "android/app/build.gradle" ]; then
-            python3 -c "p='android/app/build.gradle'; c=open(p).read(); 'VERSION_21' in c or open(p,'w').write(c.replace('buildTypes {','compileOptions { sourceCompatibility JavaVersion.VERSION_21; targetCompatibility JavaVersion.VERSION_21 }\n    buildTypes {'))" 2>/dev/null || true
-          fi
-
-          if [ -f "android/gradle/wrapper/gradle-wrapper.properties" ]; then
-            sed -i 's/gradle-8.11.1-all.zip/gradle-8.14.3-all.zip/g' android/gradle/wrapper/gradle-wrapper.properties
-          fi
-
-      - name: 🔑 6. Berikan Izin Eksekusi Gradle Wrapper
-        run: |
-          echo "=== MEMERIKSA PERIZINAN GRADLE WRAPPER ==="
-          if [ -d "android" ]; then
-            cd android
-          fi
-          chmod +x gradlew 2>/dev/null || true
-          ls -lh gradlew gradle/wrapper/
-
-      - name: 🔨 7. Kompilasi Android Debug APK
-        run: |
-          echo "=== MEMULAI PROSES BUILD GRADLE ==="
-          if [ -d "android" ]; then
-            cd android
-          fi
-          set +e
-          ./gradlew assembleDebug --no-daemon -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease > build_log.txt 2>&1
-          BUILD_STATUS=$?
-          cat build_log.txt
-          if [ $BUILD_STATUS -ne 0 ]; then
-            echo ""
-            echo "=================================================================="
-            echo "🚨 RINGKASAN PENYEBAB ERROR DARI GRADLE:"
-            echo "=================================================================="
-            grep -B 1 -A 30 "What went wrong:" build_log.txt || tail -n 40 build_log.txt
-            echo "=================================================================="
-            exit $BUILD_STATUS
-          fi
-
-      - name: 📋 8. Siapkan File APK Hasil Build
-        run: |
-          mkdir -p output_apk
-          echo "Mencari file APK yang dihasilkan..."
-          find . -type f -name "*.apk"
-          APK_PATH=$(find . -type f -name "*.apk" | head -n 1)
-          if [ -n "$APK_PATH" ]; then
-            echo "APK ditemukan di: $APK_PATH"
-            cp "$APK_PATH" output_apk/srcmasngud-kasir-v1.0.apk
-            echo "File APK berhasil disalin ke output_apk/srcmasngud-kasir-v1.0.apk"
-            ls -lh output_apk/
-          else
-            echo "Error: File APK tidak ditemukan di seluruh direktori!"
-            exit 1
-          fi
-
-      - name: 🚀 9. Upload File APK ke Artifacts (Siap Download di GitHub)
+      - name: 🚀 9. Simpan File APK ke Artifacts (Siap Download)
         uses: actions/upload-artifact@v4
         with:
-          name: srcmasngud-kasir-apk
-          path: output_apk/srcmasngud-kasir-v1.0.apk
+          name: SRCMASNGUD-Kasir-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30

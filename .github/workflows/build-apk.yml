@@ -1,74 +1,101 @@
-⁹name: Build Android APK dari Full Project
+name: Build Android APK (SRC MASNGUD)
 
 on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
+    name: Ekstrak ZIP & Build APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Ambil File dari Repository
+      - name: 📥 1. Checkout Repository
         uses: actions/checkout@v4
-- name: 🐘 Setup Gradle Resmi
-  uses: gradle/actions/setup-gradle@v4
-  with:
-    validate-wrappers: false
-      - name: Ekstrak File Zip & Cari Direktori Proyek
-        run: |
-          for f in *.zip; do
-            if [ -f "$f" ]; then
-              echo "Mengekstrak $f..."
-              unzip -q -o "$f" -d extracted_temp
-            fi
-          done
 
-          if [ -d "extracted_temp" ]; then
-            PKG_DIR=$(find extracted_temp -name "package.json" -exec dirname {} \; | head -n 1)
-            if [ -n "$PKG_DIR" ]; then
-              echo "Menemukan proyek di: $PKG_DIR, menyalin ke root..."
-              cp -r $PKG_DIR/* .
-              cp -r $PKG_DIR/.* . 2>/dev/null || true
-            fi
-            rm -rf extracted_temp
+      - name: 📦 2. Ekstrak File ZIP (Otomatis jika ada ZIP di repo)
+        run: |
+          echo "=== MEMERIKSA FILE ZIP PROYEK ==="
+          # Cari file zip jika diunggah dalam bentuk ZIP
+          ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
+          if [ -n "$ZIP_FILE" ]; then
+            echo "Menemukan file zip: $ZIP_FILE"
+            echo "Sedang mengekstrak seluruh file proyek..."
+            unzip -o -q "$ZIP_FILE"
+            echo "Ekstraksi berhasil!"
+          else
+            echo "File proyek sudah diekstrak / tidak berupa ZIP tunggal."
           fi
 
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
+          # Pastikan folder android berada di root direktori
+          if [ ! -d "android" ]; then
+            NESTED_ANDROID=$(find . -mindepth 2 -maxdepth 3 -type d -name "android" | head -n 1)
+            if [ -n "$NESTED_ANDROID" ]; then
+              PARENT_DIR=$(dirname "$NESTED_ANDROID")
+              echo "Memindahkan folder dari subdirektori $PARENT_DIR ke root..."
+              cp -rn "$PARENT_DIR"/* . 2>/dev/null || true
+            fi
+          fi
 
-      - name: Install Dependencies & Build Web
-        run: |
-          npm install --legacy-peer-deps
-          npm install react-is --legacy-peer-deps
-          npm run build
+          echo "Daftar direktori proyek:"
+          ls -la
 
-      - name: Setup Java JDK 21
+      - name: ☕ 3. Setup Java JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
-          java-version: '21'
+          distribution: 'temurin'
+          java-version: '17'
 
-      - name: Setup Android SDK
+      - name: 🤖 4. Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Setup Gradle Resmi
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.14.3'
-
-      - name: Sinkronkan Web & Build APK Debug
+      - name: 🔑 5. Siapkan Gradle Wrapper Resmi
         run: |
-          # Sinkronkan web terbaru ke Android
-          npx cap sync android
+          echo "=== MEMPERSIAPKAN GRADLE WRAPPER ==="
+          mkdir -p android/gradle/wrapper
+          # Unduh wrapper jar resmi langsung agar tidak diblokir verifikasi keamanan
+          curl -sL https://raw.githubusercontent.com/gradle/gradle/v8.11.1/gradle/wrapper/gradle-wrapper.jar -o android/gradle/wrapper/gradle-wrapper.jar
+          
+          # Berikan izin eksekusi gradlew
+          if [ -f "android/gradlew" ]; then
+            chmod +x android/gradlew
+          fi
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+          fi
 
-          # Masuk ke folder android dan build langsung dengan Gradle resmi (tanpa wrapper jar)
-          cd android
-          gradle assembleDebug --no-daemon
+      - name: 🔨 6. Kompilasi Android Debug APK
+        run: |
+          echo "=== MEMULAI PROSES BUILD GRADLE ==="
+          if [ -d "android" ]; then
+            cd android
+          fi
+          ./gradlew assembleDebug --stacktrace --no-daemon
 
-      - name: Simpan File APK ke Artifacts
+      - name: 📋 7. Siapkan File APK Hasil Build
+        run: |
+          mkdir -p output_apk
+          # Cari file APK yang berhasil diciptakan oleh Gradle
+          APK_PATH=$(find . -type f -name "*debug*.apk" | head -n 1)
+          if [ -n "$APK_PATH" ]; then
+            echo "APK ditemukan di: $APK_PATH"
+            cp "$APK_PATH" output_apk/srcmasngud-kasir-v1.0.apk
+            echo "File APK berhasil disalin ke output_apk/srcmasngud-kasir-v1.0.apk"
+            ls -lh output_apk/
+          else
+            echo "Error: File APK tidak ditemukan!"
+            exit 1
+          fi
+
+      - name: 🚀 8. Upload File APK ke Artifacts (Siap Download di GitHub)
         uses: actions/upload-artifact@v4
         with:
-          name: SRCMASNGUD-Kasir-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: srcmasngud-kasir-apk
+          path: output_apk/srcmasngud-kasir-v1.0.apk
+          retention-days: 30

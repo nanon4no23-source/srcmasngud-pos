@@ -1,4 +1,4 @@
-name: Build Android APK dari Full Project
+⁹name: Build Android APK dari Full Project
 
 on:
   workflow_dispatch:
@@ -10,7 +10,10 @@ jobs:
     steps:
       - name: Ambil File dari Repository
         uses: actions/checkout@v4
-
+- name: 🐘 Setup Gradle Resmi
+  uses: gradle/actions/setup-gradle@v4
+  with:
+    validate-wrappers: false
       - name: Ekstrak File Zip & Cari Direktori Proyek
         run: |
           for f in *.zip; do

@@ -58,17 +58,12 @@ jobs:
       - name: 🔑 5. Siapkan Gradle Wrapper Resmi
         run: |
           echo "=== MEMPERSIAPKAN GRADLE WRAPPER ==="
-          mkdir -p android/gradle/wrapper
-          # Unduh wrapper jar resmi langsung agar tidak diblokir verifikasi keamanan
-          curl -sL https://raw.githubusercontent.com/gradle/gradle/v8.11.1/gradle/wrapper/gradle-wrapper.jar -o android/gradle/wrapper/gradle-wrapper.jar
-          
-          # Berikan izin eksekusi gradlew
-          if [ -f "android/gradlew" ]; then
-            chmod +x android/gradlew
+          if [ -d "android" ]; then
+            cd android
           fi
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-          fi
+          # Buat wrapper resmi secara otomatis menggunakan gradle bawaan sistem
+          gradle wrapper --gradle-version 8.11.1 --distribution-type all || true
+          chmod +x gradlew 2>/dev/null || true
 
       - name: 🔨 6. Kompilasi Android Debug APK
         run: |
@@ -76,7 +71,12 @@ jobs:
           if [ -d "android" ]; then
             cd android
           fi
-          ./gradlew assembleDebug --stacktrace --no-daemon
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleDebug --stacktrace --no-daemon
+          else
+            gradle assembleDebug --stacktrace --no-daemon
+          fi
 
       - name: 📋 7. Siapkan File APK Hasil Build
         run: |

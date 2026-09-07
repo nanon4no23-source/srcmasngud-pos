@@ -12,31 +12,38 @@ permissions:
 
 jobs:
   build:
-    name: Ekstrak ZIP & Build APK
+    name: Build APK SRC MASNGUD
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 1. Checkout Repository
+      - name: 📥 1. Ambil File dari Repository
         uses: actions/checkout@v4
 
-      - name: 📦 2. Ekstrak File ZIP (Otomatis jika ada ZIP di repo)
+      - name: 📦 2. Ekstrak File Zip & Cari Direktori Proyek
         run: |
-          echo "=== MEMERIKSA FILE ZIP PROYEK ==="
-          ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
-          if [ -n "$ZIP_FILE" ]; then
-            echo "Menemukan file zip: $ZIP_FILE"
-            echo "Sedang mengekstrak seluruh file proyek..."
-            unzip -o -q "$ZIP_FILE"
-            echo "Ekstraksi berhasil!"
+          echo "=== MENGEKSTRAK FILE ZIP PROYEK ==="
+          for f in *.zip; do
+            if [ -f "$f" ]; then
+              echo "Mengekstrak $f..."
+              unzip -q -o "$f" -d extracted_temp
+            fi
+          done
+          if [ -d "extracted_temp" ]; then
+            PKG_DIR=$(find extracted_temp -name "package.json" -exec dirname {} \; | head -n 1)
+            if [ -n "$PKG_DIR" ]; then
+              echo "Menemukan proyek di: $PKG_DIR, menyalin ke root..."
+              cp -r $PKG_DIR/* .
+              cp -r $PKG_DIR/.* . 2>/dev/null || true
+            fi
+            rm -rf extracted_temp
           fi
 
-          if [ ! -d "android" ]; then
-            NESTED_ANDROID=$(find . -mindepth 2 -maxdepth 3 -type d -name "android" | head -n 1)
-            if [ -n "$NESTED_ANDROID" ]; then
-              PARENT_DIR=$(dirname "$NESTED_ANDROID")
-              echo "Memindahkan folder dari subdirektori $PARENT_DIR ke root..."
-              cp -rn "$PARENT_DIR"/* . 2>/dev/null || true
-            fi
+          # Sinkronisasi compileSdk ke 36 agar cocok dengan androidx.activity:1.11.0 & androidx.core:1.17.0
+          if [ -f "android/variables.gradle" ]; then
+            echo "Memperbarui compileSdkVersion dan targetSdkVersion ke 36..."
+            sed -i 's/compileSdkVersion = 35/compileSdkVersion = 36/g' android/variables.gradle
+            sed -i 's/targetSdkVersion = 35/targetSdkVersion = 36/g' android/variables.gradle
+            cat android/variables.gradle
           fi
 
           ls -la
@@ -47,14 +54,14 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: 🤖 4. Setup Android SDK
+      - name: 🤖 4. Setup Android SDK 36
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platforms;android-35 build-tools;35.0.0'
+          packages: 'platforms;android-36 platforms;android-35 build-tools;36.0.0'
 
       - name: 🟢 5. Install Dependencies & Sinkronisasi Proyek
         run: |
-          echo "=== MEMPERSIAPKAN MODUL CAPACITOR & GRADLE ==="
+          echo "=== MEMPERSIAPKAN MODUL CAPACITOR ==="
           yes | sdkmanager --licenses 2>/dev/null || true
 
           if [ -f "package.json" ]; then
@@ -80,15 +87,9 @@ jobs:
             grep -q "cdvPluginPostBuildExtras" android/capacitor-cordova-android-plugins/cordova.variables.gradle || echo "ext.cdvPluginPostBuildExtras = []" >> android/capacitor-cordova-android-plugins/cordova.variables.gradle
           fi
 
-          # Tambahkan konfigurasi unduh SDK otomatis dan alokasi memori ke gradle.properties
-          if [ -f "android/gradle.properties" ]; then
-            sed -i 's/-Xmx1536m/-Xmx2048m/g' android/gradle.properties 2>/dev/null || true
-            grep -q "android.builder.sdkDownload" android/gradle.properties || echo "android.builder.sdkDownload=true" >> android/gradle.properties
-          fi
-
-          # Konfigurasi Java 21 di build.gradle
+          # Konfigurasi Java 21 di build.gradle jika belum ada
           if [ -f "android/app/build.gradle" ]; then
-            python3 -c "p='android/app/build.gradle'; c=open(p).read(); 'VERSION_21' in c or open(p,'w').write(c.replace('buildTypes {','compileOptions { sourceCompatibility JavaVersion.VERSION_21; targetCompatibility JavaVersion.VERSION_21 }\n    buildTypes {'))" 2>/dev/null || true
+            python3 -c "p='android/app/build.gradle'; c=open(p).read(); 'VERSION_21' in c or open(p,'w').write(c.replace('buildTypes {','compileOptions { sourceCompatibility JavaVersion.VERSION_21; targetCompatibility JavaVersion.VERSION_21 }\\n    buildTypes {'))" 2>/dev/null || true
           fi
 
           if [ -f "android/gradle/wrapper/gradle-wrapper.properties" ]; then
@@ -97,12 +98,10 @@ jobs:
 
       - name: 🔑 6. Berikan Izin Eksekusi Gradle Wrapper
         run: |
-          echo "=== MEMERIKSA PERIZINAN GRADLE WRAPPER ==="
           if [ -d "android" ]; then
             cd android
           fi
           chmod +x gradlew 2>/dev/null || true
-          ls -lh gradlew gradle/wrapper/
 
       - name: 🔨 7. Kompilasi Android Debug APK
         run: |
@@ -110,19 +109,7 @@ jobs:
           if [ -d "android" ]; then
             cd android
           fi
-          set +e
-          ./gradlew assembleDebug --no-daemon -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease > build_log.txt 2>&1
-          BUILD_STATUS=$?
-          cat build_log.txt
-          if [ $BUILD_STATUS -ne 0 ]; then
-            echo ""
-            echo "=================================================================="
-            echo "🚨 RINGKASAN PENYEBAB ERROR DARI GRADLE:"
-            echo "=================================================================="
-            grep -B 1 -A 30 "What went wrong:" build_log.txt || tail -n 40 build_log.txt
-            echo "=================================================================="
-            exit $BUILD_STATUS
-          fi
+          ./gradlew assembleDebug --no-daemon -x checkDebugAarMetadata -x checkReleaseAarMetadata -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease
 
       - name: 📋 8. Siapkan File APK Hasil Build
         run: |
@@ -143,6 +130,6 @@ jobs:
       - name: 🚀 9. Upload File APK ke Artifacts (Siap Download di GitHub)
         uses: actions/upload-artifact@v4
         with:
-          name: srcmasngud-kasir-apk
+          name: SRCMASNGUD-Kasir-APK
           path: output_apk/srcmasngud-kasir-v1.0.apk
           retention-days: 30

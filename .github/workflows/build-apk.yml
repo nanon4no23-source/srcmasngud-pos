@@ -44,7 +44,7 @@ jobs:
           echo "Daftar direktori proyek:"
           ls -la
 
-      - name: ☕ 3. Setup Java JDK 21 (Wajib untuk Capacitor 8 & AGP 8.13)
+      - name: ☕ 3. Setup Java JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -53,7 +53,55 @@ jobs:
       - name: 🤖 4. Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 🔑 5. Berikan Izin Eksekusi Gradle Wrapper
+      - name: 🟢 5. Setup Node.js & Install Capacitor Dependencies
+        run: |
+          echo "=== MEMPERSIAPKAN NODE & DEPENDENCIES ==="
+          yes | sdkmanager --licenses 2>/dev/null || true
+
+          if [ -f "package.json" ]; then
+            npm install --legacy-peer-deps || npm install --force || npm i -D @capacitor/android@8.3.4 @capacitor/core@8.3.4
+          else
+            npm i -D @capacitor/android@8.3.4 @capacitor/core@8.3.4
+          fi
+
+          mkdir -p android/capacitor-android
+          if [ -d "node_modules/@capacitor/android/capacitor" ]; then
+            cp -rn node_modules/@capacitor/android/capacitor/* android/capacitor-android/ 2>/dev/null || true
+            echo "Modul Capacitor Android berhasil disinkronkan!"
+          fi
+
+          if [ -f "android/capacitor.settings.gradle" ]; then
+            cat << 'EOF' > android/capacitor.settings.gradle
+include ':capacitor-android'
+if (new File('../node_modules/@capacitor/android/capacitor').exists()) {
+    project(':capacitor-android').projectDir = new File('../node_modules/@capacitor/android/capacitor')
+} else {
+    project(':capacitor-android').projectDir = new File('./capacitor-android')
+}
+EOF
+          fi
+
+          python3 -c "
+import os
+path = 'android/app/build.gradle'
+if os.path.exists(path):
+    with open(path, 'r') as f:
+        c = f.read()
+    if 'VERSION_21' not in c:
+        if 'compileOptions {' in c:
+            c = c.replace('compileOptions {', 'compileOptions {\n        sourceCompatibility JavaVersion.VERSION_21\n        targetCompatibility JavaVersion.VERSION_21\n')
+        elif 'buildTypes {' in c:
+            c = c.replace('buildTypes {', 'compileOptions {\n        sourceCompatibility JavaVersion.VERSION_21\n        targetCompatibility JavaVersion.VERSION_21\n    }\n    buildTypes {')
+        with open(path, 'w') as f:
+            f.write(c)
+        print('Patch Java 21 ke android/app/build.gradle berhasil!')
+"
+
+          if [ -f "android/gradle/wrapper/gradle-wrapper.properties" ]; then
+            sed -i 's/gradle-8.11.1-all.zip/gradle-8.14.3-all.zip/g' android/gradle/wrapper/gradle-wrapper.properties
+          fi
+
+      - name: 🔑 6. Berikan Izin Eksekusi Gradle Wrapper
         run: |
           echo "=== MEMERIKSA PERIZINAN GRADLE WRAPPER ==="
           if [ -d "android" ]; then
@@ -62,7 +110,7 @@ jobs:
           chmod +x gradlew 2>/dev/null || true
           ls -lh gradlew gradle/wrapper/
 
-      - name: 🔨 6. Kompilasi Android Debug APK
+      - name: 🔨 7. Kompilasi Android Debug APK
         run: |
           echo "=== MEMULAI PROSES BUILD GRADLE ==="
           if [ -d "android" ]; then
@@ -70,7 +118,7 @@ jobs:
           fi
           ./gradlew assembleDebug --stacktrace --no-daemon
 
-      - name: 📋 7. Siapkan File APK Hasil Build
+      - name: 📋 8. Siapkan File APK Hasil Build
         run: |
           mkdir -p output_apk
           APK_PATH=$(find . -type f -name "*debug*.apk" | head -n 1)
@@ -84,7 +132,7 @@ jobs:
             exit 1
           fi
 
-      - name: 🚀 8. Upload File APK ke Artifacts (Siap Download di GitHub)
+      - name: 🚀 9. Upload File APK ke Artifacts (Siap Download di GitHub)
         uses: actions/upload-artifact@v4
         with:
           name: srcmasngud-kasir-apk

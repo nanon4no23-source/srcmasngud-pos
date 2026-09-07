@@ -110,26 +110,21 @@ jobs:
           if [ -d "android" ]; then
             cd android
           fi
-          ./gradlew assembleDebug -x lint -x test --stacktrace --no-daemon 2>&1 | tee gradle.log || {
-            echo "::error::Build Gradle gagal!"
-            echo "### ❌ Detail Error Build Gradle" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            grep -B 2 -A 30 "What went wrong:" gradle.log >> $GITHUB_STEP_SUMMARY 2>/dev/null || tail -n 40 gradle.log >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            exit 1
-          }
+          ./gradlew assembleDebug --stacktrace --no-daemon -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease
 
       - name: 📋 8. Siapkan File APK Hasil Build
         run: |
           mkdir -p output_apk
-          APK_PATH=$(find . -type f -name "*debug*.apk" | head -n 1)
+          echo "Mencari file APK yang dihasilkan..."
+          find . -type f -name "*.apk"
+          APK_PATH=$(find . -type f -name "*.apk" | head -n 1)
           if [ -n "$APK_PATH" ]; then
             echo "APK ditemukan di: $APK_PATH"
             cp "$APK_PATH" output_apk/srcmasngud-kasir-v1.0.apk
             echo "File APK berhasil disalin ke output_apk/srcmasngud-kasir-v1.0.apk"
             ls -lh output_apk/
           else
-            echo "Error: File APK tidak ditemukan!"
+            echo "Error: File APK tidak ditemukan di seluruh direktori!"
             exit 1
           fi
 

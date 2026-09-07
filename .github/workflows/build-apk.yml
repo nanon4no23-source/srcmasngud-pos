@@ -41,8 +41,8 @@ jobs:
           # Sinkronisasi compileSdk ke 36 agar cocok dengan androidx.activity:1.11.0 & androidx.core:1.17.0
           if [ -f "android/variables.gradle" ]; then
             echo "Memperbarui compileSdkVersion dan targetSdkVersion ke 36..."
-            sed -i 's/compileSdkVersion = 35/compileSdkVersion = 36/g' android/variables.gradle
-            sed -i 's/targetSdkVersion = 35/targetSdkVersion = 36/g' android/variables.gradle
+            sed -i 's/compileSdkVersion = [0-9]*/compileSdkVersion = 36/g' android/variables.gradle
+            sed -i 's/targetSdkVersion = [0-9]*/targetSdkVersion = 36/g' android/variables.gradle
             cat android/variables.gradle
           fi
 
@@ -109,7 +109,7 @@ jobs:
           if [ -d "android" ]; then
             cd android
           fi
-          ./gradlew assembleDebug --no-daemon -x checkDebugAarMetadata -x checkReleaseAarMetadata -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease
+          ./gradlew :app:assembleDebug --no-daemon -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease
 
       - name: 📋 8. Siapkan File APK Hasil Build
         run: |

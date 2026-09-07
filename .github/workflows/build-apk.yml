@@ -22,7 +22,6 @@ jobs:
       - name: 📦 2. Ekstrak File ZIP (Otomatis jika ada ZIP di repo)
         run: |
           echo "=== MEMERIKSA FILE ZIP PROYEK ==="
-          # Cari file zip jika diunggah dalam bentuk ZIP
           ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
           if [ -n "$ZIP_FILE" ]; then
             echo "Menemukan file zip: $ZIP_FILE"
@@ -33,7 +32,6 @@ jobs:
             echo "File proyek sudah diekstrak / tidak berupa ZIP tunggal."
           fi
 
-          # Pastikan folder android berada di root direktori
           if [ ! -d "android" ]; then
             NESTED_ANDROID=$(find . -mindepth 2 -maxdepth 3 -type d -name "android" | head -n 1)
             if [ -n "$NESTED_ANDROID" ]; then
@@ -46,24 +44,23 @@ jobs:
           echo "Daftar direktori proyek:"
           ls -la
 
-      - name: ☕ 3. Setup Java JDK 17
+      - name: ☕ 3. Setup Java JDK 21 (Wajib untuk Capacitor 8 & AGP 8.13)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: 🤖 4. Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 🔑 5. Siapkan Gradle Wrapper Resmi
+      - name: 🔑 5. Berikan Izin Eksekusi Gradle Wrapper
         run: |
-          echo "=== MEMPERSIAPKAN GRADLE WRAPPER ==="
+          echo "=== MEMERIKSA PERIZINAN GRADLE WRAPPER ==="
           if [ -d "android" ]; then
             cd android
           fi
-          # Buat wrapper resmi secara otomatis menggunakan gradle bawaan sistem
-          gradle wrapper --gradle-version 8.11.1 --distribution-type all || true
           chmod +x gradlew 2>/dev/null || true
+          ls -lh gradlew gradle/wrapper/
 
       - name: 🔨 6. Kompilasi Android Debug APK
         run: |
@@ -71,17 +68,11 @@ jobs:
           if [ -d "android" ]; then
             cd android
           fi
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew assembleDebug --stacktrace --no-daemon
-          else
-            gradle assembleDebug --stacktrace --no-daemon
-          fi
+          ./gradlew assembleDebug --stacktrace --no-daemon
 
       - name: 📋 7. Siapkan File APK Hasil Build
         run: |
           mkdir -p output_apk
-          # Cari file APK yang berhasil diciptakan oleh Gradle
           APK_PATH=$(find . -type f -name "*debug*.apk" | head -n 1)
           if [ -n "$APK_PATH" ]; then
             echo "APK ditemukan di: $APK_PATH"

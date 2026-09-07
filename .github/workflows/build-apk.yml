@@ -28,8 +28,6 @@ jobs:
             echo "Sedang mengekstrak seluruh file proyek..."
             unzip -o -q "$ZIP_FILE"
             echo "Ekstraksi berhasil!"
-          else
-            echo "File proyek sudah diekstrak / tidak berupa ZIP tunggal."
           fi
 
           if [ ! -d "android" ]; then
@@ -41,7 +39,6 @@ jobs:
             fi
           fi
 
-          echo "Daftar direktori proyek:"
           ls -la
 
       - name: ☕ 3. Setup Java JDK 21
@@ -53,49 +50,23 @@ jobs:
       - name: 🤖 4. Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 🟢 5. Setup Node.js & Install Capacitor Dependencies
+      - name: 🟢 5. Install Dependencies & Sinkronisasi Proyek
         run: |
-          echo "=== MEMPERSIAPKAN NODE & DEPENDENCIES ==="
+          echo "=== MEMPERSIAPKAN MODUL CAPACITOR & GRADLE ==="
           yes | sdkmanager --licenses 2>/dev/null || true
 
           if [ -f "package.json" ]; then
-            npm install --legacy-peer-deps || npm install --force || npm i -D @capacitor/android@8.3.4 @capacitor/core@8.3.4
-          else
-            npm i -D @capacitor/android@8.3.4 @capacitor/core@8.3.4
+            npm install --legacy-peer-deps || npm i -D @capacitor/android@8.3.4 @capacitor/core@8.3.4 || true
           fi
 
-          mkdir -p android/capacitor-android
-          if [ -d "node_modules/@capacitor/android/capacitor" ]; then
+          if [ -d "node_modules/@capacitor/android/capacitor" ] && [ ! -d "android/capacitor-android" ]; then
+            mkdir -p android/capacitor-android
             cp -rn node_modules/@capacitor/android/capacitor/* android/capacitor-android/ 2>/dev/null || true
-            echo "Modul Capacitor Android berhasil disinkronkan!"
           fi
 
-          if [ -f "android/capacitor.settings.gradle" ]; then
-            cat << 'EOF' > android/capacitor.settings.gradle
-include ':capacitor-android'
-if (new File('../node_modules/@capacitor/android/capacitor').exists()) {
-    project(':capacitor-android').projectDir = new File('../node_modules/@capacitor/android/capacitor')
-} else {
-    project(':capacitor-android').projectDir = new File('./capacitor-android')
-}
-EOF
+          if [ -f "android/app/build.gradle" ]; then
+            python3 -c "p='android/app/build.gradle'; c=open(p).read(); 'VERSION_21' in c or open(p,'w').write(c.replace('buildTypes {','compileOptions { sourceCompatibility JavaVersion.VERSION_21; targetCompatibility JavaVersion.VERSION_21 }\n    buildTypes {'))" 2>/dev/null || true
           fi
-
-          python3 -c "
-import os
-path = 'android/app/build.gradle'
-if os.path.exists(path):
-    with open(path, 'r') as f:
-        c = f.read()
-    if 'VERSION_21' not in c:
-        if 'compileOptions {' in c:
-            c = c.replace('compileOptions {', 'compileOptions {\n        sourceCompatibility JavaVersion.VERSION_21\n        targetCompatibility JavaVersion.VERSION_21\n')
-        elif 'buildTypes {' in c:
-            c = c.replace('buildTypes {', 'compileOptions {\n        sourceCompatibility JavaVersion.VERSION_21\n        targetCompatibility JavaVersion.VERSION_21\n    }\n    buildTypes {')
-        with open(path, 'w') as f:
-            f.write(c)
-        print('Patch Java 21 ke android/app/build.gradle berhasil!')
-"
 
           if [ -f "android/gradle/wrapper/gradle-wrapper.properties" ]; then
             sed -i 's/gradle-8.11.1-all.zip/gradle-8.14.3-all.zip/g' android/gradle/wrapper/gradle-wrapper.properties

@@ -110,7 +110,19 @@ jobs:
           if [ -d "android" ]; then
             cd android
           fi
-          ./gradlew assembleDebug --stacktrace --no-daemon -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease
+          set +e
+          ./gradlew assembleDebug --no-daemon -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease > build_log.txt 2>&1
+          BUILD_STATUS=$?
+          cat build_log.txt
+          if [ $BUILD_STATUS -ne 0 ]; then
+            echo ""
+            echo "=================================================================="
+            echo "🚨 RINGKASAN PENYEBAB ERROR DARI GRADLE:"
+            echo "=================================================================="
+            grep -B 1 -A 30 "What went wrong:" build_log.txt || tail -n 40 build_log.txt
+            echo "=================================================================="
+            exit $BUILD_STATUS
+          fi
 
       - name: 📋 8. Siapkan File APK Hasil Build
         run: |

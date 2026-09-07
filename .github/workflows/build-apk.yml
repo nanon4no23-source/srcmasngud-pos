@@ -49,6 +49,8 @@ jobs:
 
       - name: 🤖 4. Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0'
 
       - name: 🟢 5. Install Dependencies & Sinkronisasi Proyek
         run: |
@@ -59,11 +61,26 @@ jobs:
             npm install --legacy-peer-deps || npm i -D @capacitor/android@8.3.4 @capacitor/core@8.3.4 || true
           fi
 
-          if [ -d "node_modules/@capacitor/android/capacitor" ] && [ ! -d "android/capacitor-android" ]; then
-            mkdir -p android/capacitor-android
+          # Bersihkan sisa package lama jika ada
+          rm -rf android/app/src/main/java/com/arapos 2>/dev/null || true
+
+          # Sinkronisasi capacitor-android
+          mkdir -p android/capacitor-android
+          if [ -d "node_modules/@capacitor/android/capacitor" ]; then
             cp -rn node_modules/@capacitor/android/capacitor/* android/capacitor-android/ 2>/dev/null || true
           fi
 
+          # Pastikan capacitor.settings.gradle mengenali modul
+          if [ -f "android/capacitor.settings.gradle" ]; then
+            python3 -c "open('android/capacitor.settings.gradle','w').write(\"include ':capacitor-android'\\nif (new File('../node_modules/@capacitor/android/capacitor').exists()) {\\n    project(':capacitor-android').projectDir = new File('../node_modules/@capacitor/android/capacitor')\\n} else {\\n    project(':capacitor-android').projectDir = new File('./capacitor-android')\\n}\\n\")"
+          fi
+
+          # Aktifkan download SDK otomatis
+          if [ -f "android/gradle.properties" ]; then
+            grep -q "android.builder.sdkDownload" android/gradle.properties || echo "android.builder.sdkDownload=true" >> android/gradle.properties
+          fi
+
+          # Konfigurasi Java 21 di build.gradle
           if [ -f "android/app/build.gradle" ]; then
             python3 -c "p='android/app/build.gradle'; c=open(p).read(); 'VERSION_21' in c or open(p,'w').write(c.replace('buildTypes {','compileOptions { sourceCompatibility JavaVersion.VERSION_21; targetCompatibility JavaVersion.VERSION_21 }\n    buildTypes {'))" 2>/dev/null || true
           fi

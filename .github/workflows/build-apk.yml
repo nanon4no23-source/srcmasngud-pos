@@ -1,4 +1,4 @@
-name: Build Android APK (Yuk Bos)
+name: Build Android APK (SRC MASNGUD)
 
 on:
   push:
@@ -12,128 +12,67 @@ permissions:
 
 jobs:
   build:
-    name: Build APK Yuk Bos
+    name: Build Android APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 1. Ambil File dari Repository
+      - name: 📥 Checkout Kode Repositori
         uses: actions/checkout@v4
 
-      - name: 📦 2. Ekstrak & Sinkronisasi File Proyek (Otomatis Timpa ZIP)
-        run: |
-          echo "=== MEMERIKSA DAN MENGEKSTRAK ARSIP PROYEK ==="
-          for f in *yukbos*.zip *full-project*.zip *.zip; do
-            if [ -f "$f" ]; then
-              echo "Ditemukan arsip proyek: $f. Mengekstrak dan menimpa berkas proyek..."
-              unzip -q -o "$f" -d extracted_temp
-              PKG_DIR=$(find extracted_temp -name "package.json" -exec dirname {} \; | head -n 1)
-              if [ -n "$PKG_DIR" ]; then
-                echo "Menyalin file proyek dari $PKG_DIR ke direktori kerja..."
-                cp -rf $PKG_DIR/* .
-                cp -rf $PKG_DIR/.* . 2>/dev/null || true
-              fi
-              rm -rf extracted_temp
-              echo "✅ Ekstraksi arsip $f selesai."
-              break
-            fi
-          done
-
-          if [ -f "android/variables.gradle" ]; then
-            echo "Memperbarui compileSdkVersion dan targetSdkVersion ke 36..."
-            sed -i 's/compileSdkVersion = [0-9]*/compileSdkVersion = 36/g' android/variables.gradle
-            sed -i 's/targetSdkVersion = [0-9]*/targetSdkVersion = 36/g' android/variables.gradle
-          fi
-
-      - name: ☕ 3. Setup Java JDK 21
+      - name: ☕ Setup Java JDK 21 (Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
+          cache: 'gradle'
 
-      - name: 🤖 4. Setup Android SDK 36
+      - name: 🤖 Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: 🟢 Setup Node.js 20
+        uses: actions/setup-node@v4
         with:
-          packages: 'platforms;android-36 platforms;android-35 build-tools;36.0.0'
+          node-version: 20
+          cache: 'npm'
 
-      - name: 🎨 5. Pasang Splash Screen & Ikon Yuk Bos
+      - name: 📦 Install Node Dependencies
         run: |
-          echo "=== MEMASTIKAN SPLASH SCREEN & IKON RESMI TERPASANG ==="
-          python3 - << 'EOF'
-          import os, subprocess, glob
+          npm ci || npm install --legacy-peer-deps
 
-          logo_src = None
-          for candidate in ['public/pwa-512x512.png', 'public/icon.png', 'public/pwa-maskable-512x512.png', 'public/apple-touch-icon.png']:
-              if os.path.exists(candidate):
-                  logo_src = candidate
-                  break
-
-          if logo_src:
-              os.makedirs('android/app/src/main/res/drawable', exist_ok=True)
-              subprocess.run([
-                  'convert', '-size', '512x512', 'xc:none',
-                  '(', logo_src, '-resize', '360x360', ')',
-                  '-gravity', 'center', '-composite',
-                  '-depth', '8', 'png32:android/app/src/main/res/drawable/splash_icon.png'
-              ], check=True)
-
-              mipmaps = [
-                  ('mipmap-mdpi', 48, 108, 72),
-                  ('mipmap-hdpi', 72, 162, 108),
-                  ('mipmap-xhdpi', 96, 216, 144),
-                  ('mipmap-xxhdpi', 144, 324, 216),
-                  ('mipmap-xxxhdpi', 192, 432, 288),
-              ]
-              for folder, icon_sz, fg_sz, inner_sz in mipmaps:
-                  d = os.path.join('android/app/src/main/res', folder)
-                  os.makedirs(d, exist_ok=True)
-                  subprocess.run(['convert', logo_src, '-resize', f'{icon_sz}x{icon_sz}!', '-depth', '8', f'png32:{os.path.join(d, "ic_launcher.png")}'], check=True)
-                  subprocess.run(['convert', logo_src, '-resize', f'{icon_sz}x{icon_sz}!', '-depth', '8', f'png32:{os.path.join(d, "ic_launcher_round.png")}'], check=True)
-                  subprocess.run([
-                      'convert', '-size', f'{fg_sz}x{fg_sz}', 'xc:none',
-                      '(', logo_src, '-resize', f'{inner_sz}x{inner_sz}', ')',
-                      '-gravity', 'center', '-composite',
-                      '-depth', '8', f'png32:{os.path.join(d, "ic_launcher_foreground.png")}'
-                  ], check=True)
-          EOF
-
-      - name: 🟢 6. Install Dependencies & Sinkronisasi Proyek
+      - name: 🌐 Build Web App (Vite)
         run: |
-          yes | sdkmanager --licenses 2>/dev/null || true
-          if [ -f "package.json" ]; then
-            npm install --legacy-peer-deps || true
-            npm run build || true
-            npx cap sync android || true
+          npm run build
+
+      - name: 🔄 Sinkronisasi Capacitor Android
+        run: |
+          npx cap sync android
+
+      - name: 🔑 Berikan Izin Eksekusi Gradle Wrapper
+        run: |
+          chmod +x ./android/gradlew
+
+      - name: 🔨 Compile & Build APK Android
+        run: |
+          cd android
+          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleRelease --stacktrace || true
+
+      - name: 📂 Kumpulkan & Gandakan File APK
+        run: |
+          mkdir -p output-apk
+          if [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
+            cp android/app/build/outputs/apk/debug/app-debug.apk output-apk/srcmasngud-kasir-v1.0.apk
+            cp android/app/build/outputs/apk/debug/app-debug.apk output-apk/srcmasngud-kasir-debug.apk
           fi
-
-          if [ -f "android/gradle/wrapper/gradle-wrapper.properties" ]; then
-            sed -i 's/gradle-8.11.1-all.zip/gradle-8.14.3-all.zip/g' android/gradle/wrapper/gradle-wrapper.properties
+          if [ -f "android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
+            cp android/app/build/outputs/apk/release/app-release-unsigned.apk output-apk/srcmasngud-kasir-release-unsigned.apk
           fi
+          echo "=== DAFTAR BERKAS APK YANG DIHASILKAN ==="
+          ls -lh output-apk/
 
-      - name: 🔑 7. Berikan Izin Eksekusi Gradle Wrapper
-        run: |
-          if [ -d "android" ]; then cd android; fi
-          chmod +x gradlew 2>/dev/null || true
-
-      - name: 🔨 8. Kompilasi Android Debug APK
-        run: |
-          if [ -d "android" ]; then cd android; fi
-          ./gradlew :app:assembleDebug --no-daemon -x lint -x test -x lintVitalRelease
-
-      - name: 📋 9. Siapkan File APK Hasil Build
-        run: |
-          mkdir -p output_apk
-          APK_PATH=$(find . -type f -name "*.apk" | head -n 1)
-          if [ -n "$APK_PATH" ]; then
-            cp "$APK_PATH" output_apk/yukbos-kasir-v1.0.apk
-            ls -lh output_apk/
-          else
-            echo "Error: File APK tidak ditemukan!"
-            exit 1
-          fi
-
-      - name: 🚀 10. Upload File APK ke Artifacts
+      - name: 🚀 Unggah File APK ke Artifacts GitHub
         uses: actions/upload-artifact@v4
         with:
-          name: YukBos-Kasir-APK
-          path: output_apk/yukbos-kasir-v1.0.apk
+          name: srcmasngud-kasir-apk
+          path: output-apk/*
           retention-days: 30

@@ -1,4 +1,4 @@
-name: Build Android APK (SRC MASNGUD)
+name: Build Android APK (Yuk Bos)
 
 on:
   push:
@@ -12,47 +12,37 @@ permissions:
 
 jobs:
   build:
-    name: Build APK SRC MASNGUD
+    name: Build APK Yuk Bos
     runs-on: ubuntu-latest
 
     steps:
       - name: 📥 1. Ambil File dari Repository
         uses: actions/checkout@v4
 
-      - name: 📦 2. Persiapan Direktori Proyek (Anti-Overwrite)
+      - name: 📦 2. Ekstrak & Sinkronisasi File Proyek (Otomatis Timpa ZIP)
         run: |
-          echo "=== MEMERIKSA STRUKTUR PROYEK ==="
-          # Jika package.json sudah ada di root repo, JANGAN ekstrak zip apapun agar kode terbaru tidak tertimpa!
-          if [ ! -f "package.json" ]; then
-            echo "package.json belum ada di root, mencari dalam arsip zip..."
-            for f in *.zip; do
-              if [ -f "$f" ]; then
-                echo "Mengekstrak $f..."
-                unzip -q -o "$f" -d extracted_temp
-              fi
-            done
-            if [ -d "extracted_temp" ]; then
+          echo "=== MEMERIKSA DAN MENGEKSTRAK ARSIP PROYEK ==="
+          for f in *yukbos*.zip *full-project*.zip *.zip; do
+            if [ -f "$f" ]; then
+              echo "Ditemukan arsip proyek: $f. Mengekstrak dan menimpa berkas proyek..."
+              unzip -q -o "$f" -d extracted_temp
               PKG_DIR=$(find extracted_temp -name "package.json" -exec dirname {} \; | head -n 1)
               if [ -n "$PKG_DIR" ]; then
-                echo "Menemukan proyek di: $PKG_DIR, menyalin ke root..."
-                cp -r $PKG_DIR/* .
-                cp -r $PKG_DIR/.* . 2>/dev/null || true
+                echo "Menyalin file proyek dari $PKG_DIR ke direktori kerja..."
+                cp -rf $PKG_DIR/* .
+                cp -rf $PKG_DIR/.* . 2>/dev/null || true
               fi
               rm -rf extracted_temp
+              echo "✅ Ekstraksi arsip $f selesai."
+              break
             fi
-          else
-            echo "✅ Kode sumber terbaru terdeteksi langsung di root repository. Melewati ekstraksi zip."
-          fi
+          done
 
-          # Sinkronisasi compileSdk ke 36 agar cocok dengan androidx.activity & androidx.core terbaru
           if [ -f "android/variables.gradle" ]; then
             echo "Memperbarui compileSdkVersion dan targetSdkVersion ke 36..."
             sed -i 's/compileSdkVersion = [0-9]*/compileSdkVersion = 36/g' android/variables.gradle
             sed -i 's/targetSdkVersion = [0-9]*/targetSdkVersion = 36/g' android/variables.gradle
-            cat android/variables.gradle
           fi
-
-          ls -la
 
       - name: ☕ 3. Setup Java JDK 21
         uses: actions/setup-java@v4
@@ -65,82 +55,85 @@ jobs:
         with:
           packages: 'platforms;android-36 platforms;android-35 build-tools;36.0.0'
 
-      - name: 🟢 5. Install Dependencies & Sinkronisasi Proyek
+      - name: 🎨 5. Pasang Splash Screen & Ikon Yuk Bos
         run: |
-          echo "=== MEMPERSIAPKAN MODUL CAPACITOR ==="
-          yes | sdkmanager --licenses 2>/dev/null || true
+          echo "=== MEMASTIKAN SPLASH SCREEN & IKON RESMI TERPASANG ==="
+          python3 - << 'EOF'
+          import os, subprocess, glob
 
+          logo_src = None
+          for candidate in ['public/pwa-512x512.png', 'public/icon.png', 'public/pwa-maskable-512x512.png', 'public/apple-touch-icon.png']:
+              if os.path.exists(candidate):
+                  logo_src = candidate
+                  break
+
+          if logo_src:
+              os.makedirs('android/app/src/main/res/drawable', exist_ok=True)
+              subprocess.run([
+                  'convert', '-size', '512x512', 'xc:none',
+                  '(', logo_src, '-resize', '360x360', ')',
+                  '-gravity', 'center', '-composite',
+                  '-depth', '8', 'png32:android/app/src/main/res/drawable/splash_icon.png'
+              ], check=True)
+
+              mipmaps = [
+                  ('mipmap-mdpi', 48, 108, 72),
+                  ('mipmap-hdpi', 72, 162, 108),
+                  ('mipmap-xhdpi', 96, 216, 144),
+                  ('mipmap-xxhdpi', 144, 324, 216),
+                  ('mipmap-xxxhdpi', 192, 432, 288),
+              ]
+              for folder, icon_sz, fg_sz, inner_sz in mipmaps:
+                  d = os.path.join('android/app/src/main/res', folder)
+                  os.makedirs(d, exist_ok=True)
+                  subprocess.run(['convert', logo_src, '-resize', f'{icon_sz}x{icon_sz}!', '-depth', '8', f'png32:{os.path.join(d, "ic_launcher.png")}'], check=True)
+                  subprocess.run(['convert', logo_src, '-resize', f'{icon_sz}x{icon_sz}!', '-depth', '8', f'png32:{os.path.join(d, "ic_launcher_round.png")}'], check=True)
+                  subprocess.run([
+                      'convert', '-size', f'{fg_sz}x{fg_sz}', 'xc:none',
+                      '(', logo_src, '-resize', f'{inner_sz}x{inner_sz}', ')',
+                      '-gravity', 'center', '-composite',
+                      '-depth', '8', f'png32:{os.path.join(d, "ic_launcher_foreground.png")}'
+                  ], check=True)
+          EOF
+
+      - name: 🟢 6. Install Dependencies & Sinkronisasi Proyek
+        run: |
+          yes | sdkmanager --licenses 2>/dev/null || true
           if [ -f "package.json" ]; then
-            npm install --legacy-peer-deps || npm i -D @capacitor/android@8.3.4 @capacitor/core@8.3.4 || true
+            npm install --legacy-peer-deps || true
             npm run build || true
             npx cap sync android || true
-          fi
-
-          # Bersihkan sisa package lama jika ada
-          rm -rf android/app/src/main/java/com/arapos 2>/dev/null || true
-
-          # Bersihkan dependensi plugin eksternal :capacitor-app jika tersisa
-          if [ -f "android/app/capacitor.build.gradle" ]; then
-            sed -i "/':capacitor-app'/d" android/app/capacitor.build.gradle 2>/dev/null || true
-          fi
-
-          # Pastikan capacitor.settings.gradle selalu valid dan memuat :capacitor-android
-          if [ -f "android/capacitor.settings.gradle" ]; then
-            sed -i "/':capacitor-app'/d" android/capacitor.settings.gradle 2>/dev/null || true
-          fi
-          echo "=== ISI android/capacitor.settings.gradle ==="
-          cat android/capacitor.settings.gradle 2>/dev/null || true
-          echo "=== ISI android/app/capacitor.build.gradle ==="
-          cat android/app/capacitor.build.gradle 2>/dev/null || true
-
-          # Pastikan cdvPluginPostBuildExtras terdefinisi agar tidak null di cordova-plugins
-          if [ -f "android/capacitor-cordova-android-plugins/cordova.variables.gradle" ]; then
-            grep -q "cdvPluginPostBuildExtras" android/capacitor-cordova-android-plugins/cordova.variables.gradle || echo "ext.cdvPluginPostBuildExtras = []" >> android/capacitor-cordova-android-plugins/cordova.variables.gradle
-          fi
-
-          # Konfigurasi Java 21 di build.gradle jika belum ada
-          if [ -f "android/app/build.gradle" ]; then
-            python3 -c "p='android/app/build.gradle'; c=open(p).read(); 'VERSION_21' in c or open(p,'w').write(c.replace('buildTypes {','compileOptions { sourceCompatibility JavaVersion.VERSION_21; targetCompatibility JavaVersion.VERSION_21 }\\n    buildTypes {'))" 2>/dev/null || true
           fi
 
           if [ -f "android/gradle/wrapper/gradle-wrapper.properties" ]; then
             sed -i 's/gradle-8.11.1-all.zip/gradle-8.14.3-all.zip/g' android/gradle/wrapper/gradle-wrapper.properties
           fi
 
-      - name: 🔑 6. Berikan Izin Eksekusi Gradle Wrapper
+      - name: 🔑 7. Berikan Izin Eksekusi Gradle Wrapper
         run: |
-          if [ -d "android" ]; then
-            cd android
-          fi
+          if [ -d "android" ]; then cd android; fi
           chmod +x gradlew 2>/dev/null || true
 
-      - name: 🔨 7. Kompilasi Android Debug APK
+      - name: 🔨 8. Kompilasi Android Debug APK
         run: |
-          echo "=== MEMULAI PROSES BUILD GRADLE ==="
-          if [ -d "android" ]; then
-            cd android
-          fi
-          ./gradlew :app:assembleDebug --no-daemon -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease
+          if [ -d "android" ]; then cd android; fi
+          ./gradlew :app:assembleDebug --no-daemon -x lint -x test -x lintVitalRelease
 
-      - name: 📋 8. Siapkan File APK Hasil Build
+      - name: 📋 9. Siapkan File APK Hasil Build
         run: |
           mkdir -p output_apk
-          echo "Mencari file APK yang dihasilkan..."
-          find . -type f -name "*.apk"
           APK_PATH=$(find . -type f -name "*.apk" | head -n 1)
           if [ -n "$APK_PATH" ]; then
-            echo "APK ditemukan di: $APK_PATH"
-            cp "$APK_PATH" output_apk/srcmasngud-kasir-v1.0.apk
-            echo "File APK berhasil disalin ke output_apk/srcmasngud-kasir-v1.0.apk"
+            cp "$APK_PATH" output_apk/yukbos-kasir-v1.0.apk
             ls -lh output_apk/
           else
-            echo "Error: File APK tidak ditemukan di seluruh direktori!"
+            echo "Error: File APK tidak ditemukan!"
             exit 1
           fi
 
-      - name: 🚀 9. Upload File APK ke Artifacts (Siap Download di GitHub)
+      - name: 🚀 10. Upload File APK ke Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: SRCMASNGUD-Kasir-APK
-          path: output_apk/srcmasngud-kasir-v1.0.apk
+          name: YukBos-Kasir-APK
+          path: output_apk/yukbos-kasir-v1.0.apk
           retention-days: 30

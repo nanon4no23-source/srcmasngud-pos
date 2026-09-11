@@ -1,32 +1,14 @@
-name: Build Android APK (Capacitor)
-
-# Workflow otomatis build APK Android untuk aplikasi Kasir (com.srcmasngud.kasir)
-# Menggunakan Java JDK 21 sesuai kebutuhan Capacitor 7 (Android SDK 34/35)
+name: Build Android APK (SRC MASNGUD)
 
 on:
   push:
-    branches:
-      - main
-      - master
-    paths-ignore:
-      - 'README.md'
-      - '.gitignore'
-      - 'LICENSE'
+    branches: [ main, master ]
   pull_request:
-    branches:
-      - main
-      - master
+    branches: [ main, master ]
   workflow_dispatch:
-    inputs:
-      build_type:
-        description: 'Pilih tipe APK yang akan di-build (debug, release, atau both)'
-        required: true
-        default: 'debug'
-        type: choice
-        options:
-          - debug
-          - release
-          - both
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -34,250 +16,65 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 1. Checkout Repository
+      - name: 📥 Checkout Kode Repositori
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: 1b. Deteksi & Selaraskan Struktur Folder Proyek
-        run: |
-          echo "=== 1. CEK STRUKTUR REPOSITORY AWAL ==="
-          ls -la
-
-          # Ekstrak file zip jika ada
-          ZIP_COUNT=$(find . -maxdepth 3 -name "*.zip" | wc -l)
-          if [ "$ZIP_COUNT" -gt 0 ]; then
-            echo "Ditemukan file .zip di repository, mengekstrak..."
-            find . -maxdepth 3 -name "*.zip" -exec unzip -o {} \;
-          fi
-
-          # Cari package.json jika tidak ada di root
-          if [ ! -f "package.json" ]; then
-            PKG_PATH=$(find . -name "package.json" -not -path "*/node_modules/*" | head -n 1)
-            if [ -n "$PKG_PATH" ]; then
-              SUBDIR=$(dirname "$PKG_PATH")
-              echo "Proyek web ditemukan di: $SUBDIR"
-              if [ "$SUBDIR" != "." ]; then
-                echo "Menyalin file dari $SUBDIR ke root..."
-                shopt -s dotglob
-                cp -rn "$SUBDIR"/* . || cp -r "$SUBDIR"/* . || true
-                shopt -u dotglob
-              fi
-            fi
-          fi
-
-          # Cari folder android jika belum ada di root
-          if [ ! -d "android" ]; then
-            echo "Folder android belum ada di root, mencari..."
-            ANDROID_PATH=$(find . -type d -name "android" -not -path "*/node_modules/*" -not -path "./android" | head -n 1)
-            if [ -n "$ANDROID_PATH" ]; then
-              echo "Menyalin folder android dari $ANDROID_PATH ke ./android..."
-              cp -r "$ANDROID_PATH" ./android || true
-            fi
-          fi
-
-          echo "=== STRUKTUR DIREKTORI AKHIR ==="
-          ls -la
-
-      - name: 2. Set up Node.js
+      - name: 🟢 Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: 3. Set up Java JDK 21 (Diperlukan untuk Capacitor 7)
-        uses: actions/setup-java@v4
+      - name: ☕ Setup Java JDK 21 (Temurin)
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: 4. Set up Android SDK
+      - name: 🤖 Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 4b. Terima Lisensi Android SDK & Siapkan Build Tools
+      - name: 📦 Install Node Dependencies
         run: |
-          export ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}
-          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/tools/bin:$ANDROID_HOME/platform-tools:$PATH
-          echo "Menyetujui semua lisensi SDK..."
-          yes | sdkmanager --licenses || true
+          npm ci || npm install --legacy-peer-deps
 
-      - name: 5. Install Dependencies Node.js
+      - name: 🌐 Build Web App (Vite)
         run: |
-          if [ -f "package.json" ]; then
-            echo "Menginstall dependensi project..."
-            npm install --legacy-peer-deps
-            npm install react-is --legacy-peer-deps || true
-          else
-            echo "Tidak ada package.json, melewati step install npm..."
-          fi
+          npm run build
 
-      - name: 6. Build Web Assets (Vite)
+      - name: 🔄 Sinkronisasi atau Inisialisasi Android
         run: |
-          if [ -f "package.json" ]; then
-            echo "Membangun web assets dengan Vite..."
-            npm run build || {
-              echo "Peringatan: Build Vite mengalami kendala. Memeriksa aset bawaan Android..."
-              if [ -f "android/app/src/main/assets/public/index.html" ]; then
-                echo "Aset web Android sudah tersedia lengkap di android/app/src/main/assets/public. Melanjutkan..."
-                mkdir -p dist
-                cp -r android/app/src/main/assets/public/* dist/ || true
-              fi
-            }
-          else
-            echo "Tidak ada package.json, melewati step build web..."
+          if [ ! -d "android" ]; then
+            echo "Direktori android tidak ditemukan, otomatis membuat dengan npx cap add android..."
+            npx cap add android
           fi
+          npx cap sync android
 
-      - name: 7. Sinkronisasi Capacitor dengan Android
+      - name: 🔑 Berikan Izin Eksekusi Gradle Wrapper
         run: |
-          if [ -f "package.json" ] && [ -d "android" ]; then
-            echo "Sinkronisasi Capacitor ke folder android..."
-            npx cap sync android || true
-          else
-            echo "Melewati sinkronisasi Capacitor..."
-          fi
+          chmod +x ./android/gradlew || true
 
-      - name: 8. Konfigurasi Gradle Properties, Permissions & Google Services
+      - name: 🔨 Compile & Build APK Android
         run: |
-          echo "Mengoptimalkan gradle.properties..."
-          GRADLE_PROP=$(find . -name "gradle.properties" | head -n 1)
-          if [ -n "$GRADLE_PROP" ]; then
-            echo "" >> "$GRADLE_PROP"
-            echo "android.useAndroidX=true" >> "$GRADLE_PROP"
-            echo "android.enableJetifier=true" >> "$GRADLE_PROP"
-            echo "org.gradle.jvmargs=-Xmx3072m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8" >> "$GRADLE_PROP"
-          fi
+          cd android
+          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleRelease --stacktrace || true
 
-          # Pastikan file google-services.json ada jika dibutuhkan plugin Firebase/Google
-          if [ -d "android/app" ] && [ ! -f "android/app/google-services.json" ]; then
-            echo "Membuat google-services.json default untuk com.srcmasngud.kasir..."
-            echo '{"project_info":{"project_number":"386138592370","project_id":"kasir-srcmasngud","storage_bucket":"kasir-srcmasngud.appspot.com"},"client":[{"client_info":{"mobilesdk_app_id":"1:386138592370:android:a1b2c3d4e5f6","android_client_info":{"package_name":"com.srcmasngud.kasir"}},"oauth_client":[],"api_key":[{"current_key":"AIzaSyDummyKeyForBuildVerification1234567"}],"services":{"appinvite_service":{"other_platform_oauth_client":[]}}}],"configuration_version":"1"}' > android/app/google-services.json
-          fi
-
-          find . -name "gradlew" -exec chmod +x {} \;
-
-      - name: 9. Build Debug APK
-        if: github.event_name != 'workflow_dispatch' || github.event.inputs.build_type == 'debug' || github.event.inputs.build_type == 'both'
+      - name: 📂 Kumpulkan & Gandakan File APK
         run: |
-          GRADLEW_FILE=$(find . -name "gradlew" | head -n 1)
-          if [ -z "$GRADLEW_FILE" ]; then
-            echo "ERROR: File gradlew tidak ditemukan di repository!"
-            exit 1
+          mkdir -p output-apk
+          if [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
+            cp android/app/build/outputs/apk/debug/app-debug.apk output-apk/srcmasngud-kasir-v1.0.apk
+            cp android/app/build/outputs/apk/debug/app-debug.apk output-apk/srcmasngud-kasir-debug.apk
           fi
-          GRADLE_DIR=$(dirname "$GRADLEW_FILE")
-          echo "Menjalankan build Debug APK di direktori: $GRADLE_DIR"
-          cd "$GRADLE_DIR"
-          chmod +x ./gradlew
-
-          set +e
-          ./gradlew assembleDebug -x lint -x test --no-daemon --console=plain > gradle_build.log 2>&1
-          BUILD_EXIT=$?
-
-          if [ $BUILD_EXIT -ne 0 ]; then
-            echo ""
-            echo "=================================================================="
-            echo "❌ PENYEBAB UTAMA KEGAGALAN BUILD GRADLE (WHAT WENT WRONG):"
-            echo "=================================================================="
-            sed -n '/\* What went wrong:/,/\* Try:/p' gradle_build.log || true
-            echo ""
-            echo "--- Baris Tugas yang Gagal ---"
-            grep -E "(> Task .* FAILED|error:|failure)" gradle_build.log | head -n 25 || true
-            echo "=================================================================="
-            
-            echo "### ❌ Build Debug APK Gagal" >> $GITHUB_STEP_SUMMARY
-            echo "```text" >> $GITHUB_STEP_SUMMARY
-            sed -n '/\* What went wrong:/,/\* Try:/p' gradle_build.log >> $GITHUB_STEP_SUMMARY
-            grep -E "(> Task .* FAILED|error:)" gradle_build.log | head -n 20 >> $GITHUB_STEP_SUMMARY
-            echo "```" >> $GITHUB_STEP_SUMMARY
-
-            echo "--- 40 Baris Terakhir Log Gradle ---"
-            tail -n 40 gradle_build.log
-
-            exit $BUILD_EXIT
-          else
-            echo "✅ Build Debug APK Berhasil!"
-            cat gradle_build.log | grep -E "BUILD SUCCESSFUL" || echo "BUILD SUCCESSFUL"
+          if [ -f "android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
+            cp android/app/build/outputs/apk/release/app-release-unsigned.apk output-apk/srcmasngud-kasir-release-unsigned.apk
           fi
+          echo "=== DAFTAR BERKAS APK YANG DIHASILKAN ==="
+          ls -lh output-apk/
 
-      - name: 10. Build Release APK
-        if: github.event_name == 'workflow_dispatch' && (github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'both')
-        run: |
-          GRADLEW_FILE=$(find . -name "gradlew" | head -n 1)
-          if [ -z "$GRADLEW_FILE" ]; then
-            echo "ERROR: File gradlew tidak ditemukan di repository!"
-            exit 1
-          fi
-          GRADLE_DIR=$(dirname "$GRADLEW_FILE")
-          echo "Menjalankan build Release APK di direktori: $GRADLE_DIR"
-          cd "$GRADLE_DIR"
-          chmod +x ./gradlew
-
-          set +e
-          ./gradlew assembleRelease -x lint -x test --no-daemon --console=plain > gradle_release.log 2>&1
-          BUILD_EXIT=$?
-
-          if [ $BUILD_EXIT -ne 0 ]; then
-            echo "=================================================================="
-            echo "❌ PENYEBAB UTAMA KEGAGALAN BUILD RELEASE GRADLE:"
-            echo "=================================================================="
-            sed -n '/\* What went wrong:/,/\* Try:/p' gradle_release.log || true
-            echo "=================================================================="
-            tail -n 40 gradle_release.log
-            exit $BUILD_EXIT
-          else
-            echo "✅ Build Release APK Berhasil!"
-          fi
-
-      - name: 11. Tandatangani Release APK (Jika Keystore Disediakan)
-        if: github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'both'
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "ANDROID_KEYSTORE_BASE64 tidak disediakan di Secrets. Melewati proses penandatanganan."
-            exit 0
-          fi
-          echo "Mendekode Android Keystore..."
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > release.keystore
-          
-          RELEASE_APK=$(find . -name "*release*.apk" -not -path "*/build-output/*" | head -n 1)
-          if [ -f "$RELEASE_APK" ]; then
-            echo "Menandatangani APK $RELEASE_APK..."
-            jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
-              -keystore release.keystore \
-              -storepass "$KEYSTORE_PASSWORD" \
-              -keypass "$KEY_PASSWORD" \
-              "$RELEASE_APK" "$KEY_ALIAS"
-          fi
-
-      - name: 12. Kumpulkan File APK ke Folder Output
-        run: |
-          mkdir -p build-output
-          echo "Mencari semua file .apk yang berhasil di-build..."
-          find . -type f -name "*.apk" -not -path "*/build-output/*" -exec cp -v {} build-output/ \;
-          echo "Daftar file APK yang tersedia:"
-          ls -la build-output/
-          if [ $(ls -1 build-output/*.apk 2>/dev/null | wc -l) -eq 0 ]; then
-            echo "ERROR: Tidak ada file APK yang berhasil dibuat!"
-            exit 1
-          fi
-
-      - name: 13. Upload APK sebagai GitHub Actions Artifact
+      - name: 🚀 Unggah File APK ke Artifacts GitHub
         uses: actions/upload-artifact@v4
         with:
-          name: android-apk-${{ github.run_number }}
-          path: build-output/*.apk
+          name: srcmasngud-kasir-apk
+          path: output-apk/*
           retention-days: 30
-
-      - name: 14. Publikasikan Release di GitHub (Saat Git Tag dibuat)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: build-output/*.apk
-          name: Release ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

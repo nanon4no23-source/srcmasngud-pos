@@ -19,17 +19,32 @@ jobs:
       - name: 📥 Checkout Kode Repositori
         uses: actions/checkout@v4
 
-      - name: 🔍 Deteksi Lokasi Proyek (Root atau Subfolder)
+      - name: 📦 Ekstrak Otomatis Berkas ZIP (Jika Ada)
+        run: |
+          echo "Memeriksa berkas arsip zip di repositori..."
+          if [ -f "srcmasngud-full-project.zip" ]; then
+            echo "✅ Ditemukan srcmasngud-full-project.zip, mengekstrak otomatis..."
+            unzip -q -o srcmasngud-full-project.zip
+          fi
+          # Periksa juga jika nama zip lain diunggah
+          for z in *.zip; do
+            if [ -f "$z" ] && [ ! -f "package.json" ]; then
+              echo "Mengekstrak $z..."
+              unzip -q -o "$z"
+            fi
+          done
+
+      - name: 🔍 Deteksi Lokasi Proyek
         id: locate-project
         run: |
-          echo "=== STRUKTUR FOLDER REPOSITORI SAAT INI ==="
+          echo "=== STRUKTUR FOLDER SETELAH EKSTRAK ==="
           ls -la
           
           # Cari lokasi package.json
           PKG_PATH=$(find . -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" | head -n 1)
           
           if [ -z "$PKG_PATH" ]; then
-            echo "❌ Eror: berkas package.json tidak ditemukan di repositori!"
+            echo "❌ Eror: berkas package.json tidak ditemukan bahkan setelah ekstraksi!"
             exit 1
           fi
           

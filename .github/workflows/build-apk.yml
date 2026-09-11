@@ -1,7 +1,7 @@
 name: Build Android APK (Capacitor)
 
 # Workflow otomatis build APK Android untuk aplikasi Kasir (com.srcmasngud.kasir)
-# Dilengkapi auto-fallback google-services.json, no-stacktrace cleaner log, dan GitHub Step Summary
+# Menggunakan Java JDK 21 sesuai kebutuhan Capacitor 7 (Android SDK 34/35)
 
 on:
   push:
@@ -84,11 +84,11 @@ jobs:
         with:
           node-version: 20
 
-      - name: 3. Set up Java JDK 17
+      - name: 3. Set up Java JDK 21 (Diperlukan untuk Capacitor 7)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: 4. Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -146,40 +146,40 @@ jobs:
             echo "org.gradle.jvmargs=-Xmx3072m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8" >> "$GRADLE_PROP"
           fi
 
-          # Pastikan file google-services.json ada di android/app/ agar tidak error saat Firebase plugin aktif
+          # Pastikan file google-services.json ada di android/app/
           if [ -d "android/app" ] && [ ! -f "android/app/google-services.json" ]; then
             echo "Membuat google-services.json default untuk com.srcmasngud.kasir..."
             cat << 'EOF' > android/app/google-services.json
-          {
-            "project_info": {
-              "project_number": "386138592370",
-              "project_id": "kasir-srcmasngud",
-              "storage_bucket": "kasir-srcmasngud.appspot.com"
-            },
-            "client": [
-              {
-                "client_info": {
-                  "mobilesdk_app_id": "1:386138592370:android:a1b2c3d4e5f6",
-                  "android_client_info": {
-                    "package_name": "com.srcmasngud.kasir"
-                  }
-                },
-                "oauth_client": [],
-                "api_key": [
-                  {
-                    "current_key": "AIzaSyDummyKeyForBuildVerification1234567"
-                  }
-                ],
-                "services": {
-                  "appinvite_service": {
-                    "other_platform_oauth_client": []
-                  }
-                }
-              }
-            ],
-            "configuration_version": "1"
-          }
-          EOF
+{
+  "project_info": {
+    "project_number": "386138592370",
+    "project_id": "kasir-srcmasngud",
+    "storage_bucket": "kasir-srcmasngud.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:386138592370:android:a1b2c3d4e5f6",
+        "android_client_info": {
+          "package_name": "com.srcmasngud.kasir"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDummyKeyForBuildVerification1234567"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
+EOF
           fi
 
           find . -name "gradlew" -exec chmod +x {} \;
@@ -206,7 +206,6 @@ jobs:
             echo "=================================================================="
             echo "❌ PENYEBAB UTAMA KEGAGALAN BUILD GRADLE (WHAT WENT WRONG):"
             echo "=================================================================="
-            
             sed -n '/\* What went wrong:/,/\* Try:/p' gradle_build.log || true
             echo ""
             echo "--- Baris Tugas yang Gagal ---"

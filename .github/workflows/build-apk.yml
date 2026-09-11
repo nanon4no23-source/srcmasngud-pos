@@ -1,14 +1,32 @@
-name: Build Android APK (SRC MASNGUD)
+name: Build Android APK (Capacitor)
+
+# Workflow ini otomatis membangun (build) file APK Android untuk aplikasi Kasir
+# Berdasarkan struktur proyek Capacitor Android com.srcmasngud.kasir
 
 on:
   push:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
+    paths-ignore:
+      - 'README.md'
+      - '.gitignore'
+      - 'LICENSE'
   pull_request:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
   workflow_dispatch:
-
-permissions:
-  contents: write
+    inputs:
+      build_type:
+        description: 'Pilih tipe APK yang akan di-build (debug, release, atau both)'
+        required: true
+        default: 'debug'
+        type: choice
+        options:
+          - debug
+          - release
+          - both
 
 jobs:
   build:
@@ -16,63 +34,120 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Checkout Kode Repositori
+      - name: 1. Checkout Repository
         uses: actions/checkout@v4
-
-      - name: ☕ Setup Java JDK 21 (Temurin)
-        uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '21'
-          cache: 'gradle'
+          fetch-depth: 0
 
-      - name: 🤖 Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: 🟢 Setup Node.js 20
+      - name: 2. Set up Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'npm'
+          cache-dependency-path: package-lock.json
 
-      - name: 📦 Install Node Dependencies
-        run: |
-          npm ci || npm install --legacy-peer-deps
+      - name: 3. Set up Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
 
-      - name: 🌐 Build Web App (Vite)
+      - name: 4. Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 5. Install Dependencies Node.js
         run: |
+          echo "Menginstall dependensi project..."
+          if [ -f package-lock.json ]; then
+            npm ci || npm install --legacy-peer-deps
+          else
+            npm install --legacy-peer-deps
+          fi
+
+      - name: 6. Build Web Assets (Vite)
+        run: |
+          echo "Membangun web assets dengan Vite..."
           npm run build
 
-      - name: 🔄 Sinkronisasi Capacitor Android
+      - name: 7. Sinkronisasi Capacitor dengan Android Platform
         run: |
-          npx cap sync android
+          echo "Sinkronisasi Capacitor ke folder android..."
+          if [ -d "android" ]; then
+            npx cap sync android
+          else
+            echo "Folder android belum ada, menginisialisasi platform android..."
+            npx cap add android || true
+            npx cap sync android
+          fi
 
-      - name: 🔑 Berikan Izin Eksekusi Gradle Wrapper
+      - name: 8. Berikan Izin Eksekusi pada Gradle Wrapper
         run: |
-          chmod +x ./android/gradlew
+          if [ -f "android/gradlew" ]; then
+            chmod +x android/gradlew
+          elif [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+          fi
 
-      - name: 🔨 Compile & Build APK Android
+      - name: 9. Build Debug APK
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_type == 'debug' || github.event.inputs.build_type == 'both' }}
         run: |
+          echo "Memulai proses build Debug APK..."
           cd android
-          ./gradlew assembleDebug --stacktrace
-          ./gradlew assembleRelease --stacktrace || true
+          ./gradlew clean assembleDebug --stacktrace
 
-      - name: 📂 Kumpulkan & Gandakan File APK
+      - name: 10. Build Release APK
+        if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'both') }}
         run: |
-          mkdir -p output-apk
-          if [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
-            cp android/app/build/outputs/apk/debug/app-debug.apk output-apk/srcmasngud-kasir-v1.0.apk
-            cp android/app/build/outputs/apk/debug/app-debug.apk output-apk/srcmasngud-kasir-debug.apk
-          fi
-          if [ -f "android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            cp android/app/build/outputs/apk/release/app-release-unsigned.apk output-apk/srcmasngud-kasir-release-unsigned.apk
-          fi
-          echo "=== DAFTAR BERKAS APK YANG DIHASILKAN ==="
-          ls -lh output-apk/
+          echo "Memulai proses build Release APK..."
+          cd android
+          ./gradlew assembleRelease --stacktrace
 
-      - name: 🚀 Unggah File APK ke Artifacts GitHub
+      - name: 11. Tandatangani Release APK (Jika Keystore Disediakan)
+        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' && (github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'both') }}
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "Mendekode Android Keystore..."
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/release.keystore
+          
+          # Gunakan jarsigner untuk menandatangani APK release
+          RELEASE_APK=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -f "$RELEASE_APK" ]; then
+            echo "Menandatangani APK $RELEASE_APK..."
+            jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
+              -keystore android/app/release.keystore \
+              -storepass "$KEYSTORE_PASSWORD" \
+              -keypass "$KEY_PASSWORD" \
+              "$RELEASE_APK" "$KEY_ALIAS"
+          fi
+
+      - name: 12. Kumpulkan File APK ke Folder Output
+        run: |
+          mkdir -p build-output
+          echo "Mencari semua file APK yang berhasil di-build..."
+          find android/app/build/outputs/apk -name "*.apk" -type f -exec cp -v {} build-output/ \;
+          echo "File APK di folder build-output:"
+          ls -lh build-output/
+
+      - name: 13. Upload APK sebagai GitHub Actions Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: srcmasngud-kasir-apk
-          path: output-apk/*
+          name: android-apk-${{ github.run_number }}-${{ github.sha }}
+          path: build-output/*.apk
           retention-days: 30
+
+      - name: 14. Publikasikan Release di GitHub (Saat Git Tag dibuat)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build-output/*.apk
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

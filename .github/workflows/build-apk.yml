@@ -19,6 +19,24 @@ jobs:
       - name: 📥 Checkout Kode Repositori
         uses: actions/checkout@v4
 
+      - name: 🔍 Deteksi Lokasi Proyek (Root atau Subfolder)
+        id: locate-project
+        run: |
+          echo "=== STRUKTUR FOLDER REPOSITORI SAAT INI ==="
+          ls -la
+          
+          # Cari lokasi package.json
+          PKG_PATH=$(find . -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" | head -n 1)
+          
+          if [ -z "$PKG_PATH" ]; then
+            echo "❌ Eror: berkas package.json tidak ditemukan di repositori!"
+            exit 1
+          fi
+          
+          WORKDIR=$(dirname "$PKG_PATH")
+          echo "Ditemukan package.json di folder: $WORKDIR"
+          echo "workdir=$WORKDIR" >> $GITHUB_OUTPUT
+
       - name: 🟢 Setup Node.js 20
         uses: actions/setup-node@v4
         with:
@@ -34,14 +52,17 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: 📦 Install Node Dependencies
+        working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
-          npm ci || npm install --legacy-peer-deps
+          npm install --legacy-peer-deps --no-audit
 
       - name: 🌐 Build Web App (Vite)
+        working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
           npm run build
 
       - name: 🔄 Sinkronisasi atau Inisialisasi Android
+        working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
           if [ ! -d "android" ]; then
             echo "Direktori android tidak ditemukan, otomatis membuat dengan npx cap add android..."
@@ -50,16 +71,19 @@ jobs:
           npx cap sync android
 
       - name: 🔑 Berikan Izin Eksekusi Gradle Wrapper
+        working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
           chmod +x ./android/gradlew || true
 
       - name: 🔨 Compile & Build APK Android
+        working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
           cd android
           ./gradlew assembleDebug --stacktrace
           ./gradlew assembleRelease --stacktrace || true
 
       - name: 📂 Kumpulkan & Gandakan File APK
+        working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
           mkdir -p output-apk
           if [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
@@ -76,5 +100,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: srcmasngud-kasir-apk
-          path: output-apk/*
+          path: ${{ steps.locate-project.outputs.workdir }}/output-apk/*
           retention-days: 30

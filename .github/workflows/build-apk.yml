@@ -1,7 +1,7 @@
 name: Build Android APK (Capacitor)
 
 # Workflow otomatis build APK Android untuk aplikasi Kasir (com.srcmasngud.kasir)
-# Letakkan file ini di: .github/workflows/build-apk.yml
+# Dilengkapi auto-detect lokasi package.json jika berada di dalam subfolder
 
 on:
   push:
@@ -39,6 +39,29 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: 1b. Deteksi dan Pindahkan File dari Subfolder (Jika Ada)
+        run: |
+          echo "Memeriksa struktur repository..."
+          ls -la
+          if [ ! -f "package.json" ]; then
+            echo "package.json tidak ada di root, mencari di subfolder..."
+            PKG_PATH=$(find . -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" | head -n 1)
+            if [ -n "$PKG_PATH" ]; then
+              SUBDIR=$(dirname "$PKG_PATH")
+              echo "Proyek ditemukan di: $SUBDIR"
+              echo "Menyelaraskan file proyek ke root..."
+              shopt -s dotglob
+              cp -rn "$SUBDIR"/* . || cp -r "$SUBDIR"/* . || true
+              shopt -u dotglob
+              echo "Struktur direktori sekarang:"
+              ls -la
+            else
+              echo "Peringatan: package.json tidak ditemukan."
+            fi
+          else
+            echo "package.json sudah berada di root repository."
+          fi
+
       - name: 2. Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -56,7 +79,11 @@ jobs:
       - name: 5. Install Dependencies Node.js
         run: |
           echo "Menginstall dependensi project..."
-          npm install --legacy-peer-deps
+          if [ -f package-lock.json ]; then
+            npm install --legacy-peer-deps || npm ci || true
+          else
+            npm install --legacy-peer-deps || true
+          fi
 
       - name: 6. Build Web Assets (Vite)
         run: |
@@ -69,9 +96,15 @@ jobs:
           if [ -d "android" ]; then
             npx cap sync android
           else
-            echo "Folder android belum ada, menginisialisasi platform android..."
-            npx cap add android || true
-            npx cap sync android
+            echo "Mencari folder android di subdirektori..."
+            ANDROID_DIR=$(find . -maxdepth 3 -type d -name "android" -not -path "*/node_modules/*" | head -n 1)
+            if [ -n "$ANDROID_DIR" ] && [ "$ANDROID_DIR" != "./android" ]; then
+              cp -r "$ANDROID_DIR" ./android
+              npx cap sync android
+            else
+              npx cap add android || true
+              npx cap sync android
+            fi
           fi
 
       - name: 8. Berikan Izin Eksekusi pada Gradle Wrapper

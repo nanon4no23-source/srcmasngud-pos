@@ -1,7 +1,7 @@
 name: Build Android APK (Capacitor)
 
 # Workflow otomatis build APK Android untuk aplikasi Kasir (com.srcmasngud.kasir)
-# Dilengkapi bypass lint, optimasi memori, dan auto-logging error tepat sasaran
+# Dilengkapi penangkapan error presisi (What went wrong) & auto-license Android SDK
 
 on:
   push:
@@ -90,13 +90,16 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 4. Set up Android SDK & Terima Semua Lisensi
+      - name: 4. Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 4b. Setujui Lisensi Android SDK
+      - name: 4b. Terima Lisensi Android SDK & Build-Tools
         run: |
-          echo "Menyetujui semua lisensi Android SDK..."
+          export ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}
+          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/tools/bin:$ANDROID_HOME/platform-tools:$PATH
+          echo "Menyetujui lisensi SDK..."
           yes | sdkmanager --licenses || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" || true
 
       - name: 5. Install Dependencies Node.js
         run: |
@@ -142,7 +145,6 @@ jobs:
             echo "android.useAndroidX=true" >> "$GRADLE_PROP"
             echo "android.enableJetifier=true" >> "$GRADLE_PROP"
             echo "org.gradle.jvmargs=-Xmx3072m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8" >> "$GRADLE_PROP"
-            echo "org.gradle.parallel=true" >> "$GRADLE_PROP"
           fi
           find . -name "gradlew" -exec chmod +x {} \;
 
@@ -159,17 +161,24 @@ jobs:
           cd "$GRADLE_DIR"
           chmod +x ./gradlew
 
-          # Menjalankan build Gradle dengan bypass lint agar tidak crash karena isu lint/warning
-          ./gradlew assembleDebug -x lint -x test --no-daemon 2>&1 | tee gradle-build.log || {
-            BUILD_STATUS=${PIPESTATUS[0]}
+          set +e
+          ./gradlew assembleDebug -x lint -x test --no-daemon --stacktrace > gradle_build.log 2>&1
+          BUILD_EXIT=$?
+
+          if [ $BUILD_EXIT -ne 0 ]; then
             echo ""
             echo "================================================================="
-            echo "❌ DETAIL PENYEBAB ERROR GRADLE (WHAT WENT WRONG):"
+            echo "❌ PENYEBAB PASTI ERROR GRADLE (WHAT WENT WRONG):"
             echo "================================================================="
-            awk '/\* What went wrong:/,/\* Try:/' gradle-build.log || grep -C 5 -i "error:" gradle-build.log || tail -n 40 gradle-build.log
+            sed -n '/\* What went wrong:/,/\* Try:/p' gradle_build.log
+            echo "-----------------------------------------------------------------"
+            grep -E "(> Task .* FAILED|error:|failed|Could not resolve|is missing|unsupported)" gradle_build.log | grep -v "org.gradle" | head -n 35 || true
             echo "================================================================="
-            exit $BUILD_STATUS
-          }
+            tail -n 60 gradle_build.log
+            exit $BUILD_EXIT
+          else
+            echo "✅ Build Gradle Berhasil! File APK telah dibuat."
+          fi
 
       - name: 10. Build Release APK
         if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'both') }}
@@ -184,15 +193,22 @@ jobs:
           cd "$GRADLE_DIR"
           chmod +x ./gradlew
 
-          ./gradlew assembleRelease -x lint -x test --no-daemon 2>&1 | tee gradle-release.log || {
-            BUILD_STATUS=${PIPESTATUS[0]}
+          set +e
+          ./gradlew assembleRelease -x lint -x test --no-daemon --stacktrace > gradle_release.log 2>&1
+          BUILD_EXIT=$?
+
+          if [ $BUILD_EXIT -ne 0 ]; then
+            echo ""
             echo "================================================================="
-            echo "❌ DETAIL PENYEBAB ERROR GRADLE RELEASE:"
+            echo "❌ PENYEBAB PASTI ERROR GRADLE RELEASE:"
             echo "================================================================="
-            awk '/\* What went wrong:/,/\* Try:/' gradle-release.log || tail -n 40 gradle-release.log
-            echo "================================================================="
-            exit $BUILD_STATUS
-          }
+            sed -n '/\* What went wrong:/,/\* Try:/p' gradle_release.log
+            echo "-----------------------------------------------------------------"
+            tail -n 60 gradle_release.log
+            exit $BUILD_EXIT
+          else
+            echo "✅ Build Release Berhasil! File APK Release telah dibuat."
+          fi
 
       - name: 11. Tandatangani Release APK (Jika Keystore Disediakan)
         if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' && (github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'both') }}
@@ -219,7 +235,7 @@ jobs:
         run: |
           mkdir -p build-output
           echo "Mencari semua file .apk yang berhasil di-build..."
-          find . -name "*.apk" -not -path "./build-output/*" -type f -exec cp -v {} build-output/ \;
+          find . -type f -name "*.apk" -not -path "*/build-output/*" -exec cp -v {} build-output/ \;
           echo "Daftar file APK yang tersedia:"
           ls -la build-output/
           if [ $(ls -1 build-output/*.apk 2>/dev/null | wc -l) -eq 0 ]; then

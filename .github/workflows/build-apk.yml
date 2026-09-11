@@ -23,6 +23,7 @@ jobs:
         run: |
           echo "=== MEMERIKSA BERKAS DI REPOSITORI ==="
           ls -la
+          # Jika ada file zip dan belum ada package.json di root, ekstrak otomatis
           for z in *.zip; do
             if [ -f "$z" ] && [ ! -f "package.json" ]; then
               echo "Mengekstrak $z..."

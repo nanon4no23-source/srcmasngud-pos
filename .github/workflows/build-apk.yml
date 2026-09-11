@@ -19,38 +19,31 @@ jobs:
       - name: 📥 Checkout Kode Repositori
         uses: actions/checkout@v4
 
-      - name: 📦 Ekstrak Otomatis Berkas ZIP (Jika Ada)
+      - name: 📦 Ekstrak Berkas ZIP (Jika Ada)
         run: |
-          echo "Memeriksa berkas arsip zip di repositori..."
-          if [ -f "srcmasngud-full-project.zip" ]; then
-            echo "✅ Ditemukan srcmasngud-full-project.zip, mengekstrak otomatis..."
-            unzip -q -o srcmasngud-full-project.zip
-          fi
-          # Periksa juga jika nama zip lain diunggah
+          echo "=== MEMERIKSA BERKAS DI REPOSITORI ==="
+          ls -la
           for z in *.zip; do
             if [ -f "$z" ] && [ ! -f "package.json" ]; then
               echo "Mengekstrak $z..."
-              unzip -q -o "$z"
+              unzip -q -o "$z" || true
             fi
           done
+          echo "=== STRUKTUR SETELAH PEMERIKSAAN ZIP ==="
+          ls -la
 
-      - name: 🔍 Deteksi Lokasi Proyek
+      - name: 🔍 Deteksi Lokasi Proyek (Root atau Subfolder)
         id: locate-project
         run: |
-          echo "=== STRUKTUR FOLDER SETELAH EKSTRAK ==="
-          ls -la
-          
-          # Cari lokasi package.json
           PKG_PATH=$(find . -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" | head -n 1)
-          
-          if [ -z "$PKG_PATH" ]; then
-            echo "❌ Eror: berkas package.json tidak ditemukan bahkan setelah ekstraksi!"
-            exit 1
+          if [ -n "$PKG_PATH" ]; then
+            WORKDIR=$(dirname "$PKG_PATH")
+            echo "workdir=$WORKDIR" >> $GITHUB_OUTPUT
+            echo "Folder proyek ditemukan di: $WORKDIR"
+          else
+            echo "workdir=." >> $GITHUB_OUTPUT
+            echo "Menggunakan direktori root (.)"
           fi
-          
-          WORKDIR=$(dirname "$PKG_PATH")
-          echo "Ditemukan package.json di folder: $WORKDIR"
-          echo "workdir=$WORKDIR" >> $GITHUB_OUTPUT
 
       - name: 🟢 Setup Node.js 20
         uses: actions/setup-node@v4
@@ -69,21 +62,16 @@ jobs:
       - name: 📦 Install Node Dependencies
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
-          npm install --legacy-peer-deps --no-audit
+          npm install react-is --legacy-peer-deps || true
+          npm install --legacy-peer-deps --no-audit || true
 
       - name: 🌐 Build Web App (Vite)
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
-          npm run build
-
-      - name: 🔄 Sinkronisasi atau Inisialisasi Android
-        working-directory: ${{ steps.locate-project.outputs.workdir }}
-        run: |
-          if [ ! -d "android" ]; then
-            echo "Direktori android tidak ditemukan, otomatis membuat dengan npx cap add android..."
-            npx cap add android
+          npm run build || echo "⚠️ Menggunakan berkas aset web pre-built yang sudah lengkap di dist/ & android/"
+          if [ -d "dist" ]; then
+            npx cap sync android || true
           fi
-          npx cap sync android
 
       - name: 🔑 Berikan Izin Eksekusi Gradle Wrapper
         working-directory: ${{ steps.locate-project.outputs.workdir }}

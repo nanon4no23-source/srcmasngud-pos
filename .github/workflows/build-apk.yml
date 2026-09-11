@@ -66,11 +66,10 @@ jobs:
       - name: 🤖 Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 📦 Install Node Dependencies
-        working-directory: ${{ steps.locate-project.outputs.workdir }}
+      - - name: 📦 Install Node Dependencies
         run: |
-          npm install --legacy-peer-deps --no-audit
-
+          npm install --legacy-peer-deps react-is
+          npm install --legacy-peer-deps
       - name: 🌐 Build Web App (Vite)
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |

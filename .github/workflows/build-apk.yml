@@ -146,46 +146,16 @@ jobs:
             echo "org.gradle.jvmargs=-Xmx3072m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8" >> "$GRADLE_PROP"
           fi
 
-          # Pastikan file google-services.json ada di android/app/
+          # Pastikan file google-services.json ada jika dibutuhkan plugin Firebase/Google
           if [ -d "android/app" ] && [ ! -f "android/app/google-services.json" ]; then
             echo "Membuat google-services.json default untuk com.srcmasngud.kasir..."
-            cat << 'EOF' > android/app/google-services.json
-{
-  "project_info": {
-    "project_number": "386138592370",
-    "project_id": "kasir-srcmasngud",
-    "storage_bucket": "kasir-srcmasngud.appspot.com"
-  },
-  "client": [
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:386138592370:android:a1b2c3d4e5f6",
-        "android_client_info": {
-          "package_name": "com.srcmasngud.kasir"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "AIzaSyDummyKeyForBuildVerification1234567"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
-    }
-  ],
-  "configuration_version": "1"
-}
-EOF
+            echo '{"project_info":{"project_number":"386138592370","project_id":"kasir-srcmasngud","storage_bucket":"kasir-srcmasngud.appspot.com"},"client":[{"client_info":{"mobilesdk_app_id":"1:386138592370:android:a1b2c3d4e5f6","android_client_info":{"package_name":"com.srcmasngud.kasir"}},"oauth_client":[],"api_key":[{"current_key":"AIzaSyDummyKeyForBuildVerification1234567"}],"services":{"appinvite_service":{"other_platform_oauth_client":[]}}}],"configuration_version":"1"}' > android/app/google-services.json
           fi
 
           find . -name "gradlew" -exec chmod +x {} \;
 
       - name: 9. Build Debug APK
-        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_type == 'debug' || github.event.inputs.build_type == 'both' }}
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.build_type == 'debug' || github.event.inputs.build_type == 'both'
         run: |
           GRADLEW_FILE=$(find . -name "gradlew" | head -n 1)
           if [ -z "$GRADLEW_FILE" ]; then
@@ -228,7 +198,7 @@ EOF
           fi
 
       - name: 10. Build Release APK
-        if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'both') }}
+        if: github.event_name == 'workflow_dispatch' && (github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'both')
         run: |
           GRADLEW_FILE=$(find . -name "gradlew" | head -n 1)
           if [ -z "$GRADLEW_FILE" ]; then
@@ -257,13 +227,17 @@ EOF
           fi
 
       - name: 11. Tandatangani Release APK (Jika Keystore Disediakan)
-        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' && (github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'both') }}
+        if: github.event.inputs.build_type == 'release' || github.event.inputs.build_type == 'both'
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "ANDROID_KEYSTORE_BASE64 tidak disediakan di Secrets. Melewati proses penandatanganan."
+            exit 0
+          fi
           echo "Mendekode Android Keystore..."
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > release.keystore
           

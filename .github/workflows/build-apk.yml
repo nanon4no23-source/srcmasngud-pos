@@ -19,22 +19,18 @@ jobs:
       - name: 📥 Checkout Kode Repositori
         uses: actions/checkout@v4
 
-      - name: 📦 Ekstrak Berkas ZIP (Jika Perlu)
+      - name: 📦 Ekstrak Berkas ZIP (Jika Ada)
         run: |
           echo "=== MEMERIKSA BERKAS DI REPOSITORI ==="
           ls -la
-          # Jika folder android belum ada, ekstrak dari file zip
-          if [ ! -d "android" ]; then
-            for z in *.zip; do
-              if [ -f "$z" ]; then
-                echo "Mengekstrak berkas $z..."
-                unzip -q -o "$z" || true
-              fi
-            done
-          fi
-          # Bersihkan file zip yang ada di folder assets android agar tidak membebani kompilasi
-          rm -f android/app/src/main/assets/public/*.zip 2>/dev/null || true
-          echo "=== STRUKTUR SETELAH PEMERIKSAAN ==="
+          # Jika ada file zip dan belum ada package.json di root, ekstrak otomatis
+          for z in *.zip; do
+            if [ -f "$z" ] && [ ! -f "package.json" ]; then
+              echo "Mengekstrak $z..."
+              unzip -q -o "$z" || true
+            fi
+          done
+          echo "=== STRUKTUR SETELAH PEMERIKSAAN ZIP ==="
           ls -la
 
       - name: 🔍 Deteksi Lokasi Proyek (Root atau Subfolder)
@@ -55,32 +51,28 @@ jobs:
         with:
           node-version: 20
 
-      - name: ☕ Setup Java JDK 17 (Temurin)
-        uses: actions/setup-java@v4
+      - name: ☕ Setup Java JDK 21 (Temurin)
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: 🤖 Setup Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: 'platforms;android-34 build-tools;34.0.0 cmdline-tools;latest'
 
       - name: 📦 Install Node Dependencies
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
-          npm install --legacy-peer-deps --no-audit || npm install --force || true
+          npm install react-is --legacy-peer-deps || true
+          npm install --legacy-peer-deps --no-audit || true
 
-      - name: 🌐 Build Web App & Sync ke Android
+      - name: 🌐 Build Web App (Vite)
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
-          # Build Vite Web App
-          npm run build || echo "⚠️ Build Vite dilewati, menggunakan berkas aset web yang sudah ada"
+          npm run build || echo "⚠️ Menggunakan berkas aset web pre-built yang sudah lengkap di dist/ & android/"
           if [ -d "dist" ]; then
-            npx cap copy android || true
+            npx cap sync android || true
           fi
-          # Pastikan tidak ada file zip cadangan di dalam bundle assets android
-          rm -f android/app/src/main/assets/public/*.zip 2>/dev/null || true
 
       - name: 🔑 Berikan Izin Eksekusi Gradle Wrapper
         working-directory: ${{ steps.locate-project.outputs.workdir }}
@@ -91,20 +83,21 @@ jobs:
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
           cd android
-          ./gradlew assembleDebug --no-daemon --stacktrace
-          ./gradlew assembleRelease --no-daemon --stacktrace || true
+          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleRelease --stacktrace || true
 
       - name: 📂 Kumpulkan & Gandakan File APK
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
           mkdir -p output-apk
           if [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
-            cp android/app/build/outputs/apk/debug/app-debug.apk output-apk/srcmasngud-kasir-v2.1.apk
+            cp android/app/build/outputs/apk/debug/app-debug.apk output-apk/srcmasngud-kasir-v1.0.apk
+            cp android/app/build/outputs/apk/debug/app-debug.apk output-apk/srcmasngud-kasir-debug.apk
           fi
           if [ -f "android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
             cp android/app/build/outputs/apk/release/app-release-unsigned.apk output-apk/srcmasngud-kasir-release-unsigned.apk
           fi
-          echo "=== BERKAS APK HASIL BUILD ==="
+          echo "=== DAFTAR BERKAS APK YANG DIHASILKAN ==="
           ls -lh output-apk/
 
       - name: 🚀 Unggah File APK ke Artifacts GitHub

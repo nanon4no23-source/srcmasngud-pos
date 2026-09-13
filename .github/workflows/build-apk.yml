@@ -19,13 +19,13 @@ jobs:
       - name: 📥 Checkout Kode Repositori
         uses: actions/checkout@v4
 
-      - name: 📦 Ekstrak Berkas ZIP (Jika Perlu)
+      - name: 📦 Ekstrak Berkas ZIP (Jika Ada di Repositori)
         run: |
           echo "=== MEMERIKSA BERKAS DI REPOSITORI ==="
           ls -la
-          # Jika folder android belum ada di root, cari dan ekstrak file zip
+          # Jika folder android belum ada, ekstrak semua file zip yang ada
           if [ ! -d "android" ]; then
-            for z in *.zip; do
+            for z in $(find . -maxdepth 3 -name "*.zip" -not -path "*/node_modules/*"); do
               if [ -f "$z" ]; then
                 echo "Mengekstrak berkas $z..."
                 unzip -q -o "$z" || true
@@ -33,18 +33,20 @@ jobs:
             done
           fi
           # Bersihkan file zip cadangan dari assets android agar tidak membebani kompilasi
-          rm -f android/app/src/main/assets/public/*.zip 2>/dev/null || true
+          find . -path "*/assets/public/*.zip" -delete 2>/dev/null || true
           echo "=== STRUKTUR SETELAH PEMERIKSAAN ==="
           ls -la
 
       - name: 🔍 Deteksi Lokasi Proyek (Root atau Subfolder)
         id: locate-project
         run: |
-          PKG_PATH=$(find . -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" | head -n 1)
-          if [ -n "$PKG_PATH" ]; then
-            WORKDIR=$(dirname "$PKG_PATH")
+          # Cari folder yang berisi folder android/app (misal: pos/srcmasngud-pos/android)
+          GRADLEW_PATH=$(find . -maxdepth 4 -name "gradlew" -not -path "*/node_modules/*" | head -n 1)
+          if [ -n "$GRADLEW_PATH" ]; then
+            ANDROID_DIR=$(dirname "$GRADLEW_PATH")
+            WORKDIR=$(dirname "$ANDROID_DIR")
             echo "workdir=$WORKDIR" >> $GITHUB_OUTPUT
-            echo "Folder proyek ditemukan di: $WORKDIR"
+            echo "Folder proyek ditemukan di: $WORKDIR (android ada di: $ANDROID_DIR)"
           else
             echo "workdir=." >> $GITHUB_OUTPUT
             echo "Menggunakan direktori root (.)"
@@ -55,11 +57,11 @@ jobs:
         with:
           node-version: 20
 
-      - name: ☕ Setup Java JDK 17 (Temurin)
+      - name: ☕ Setup Java JDK 21 (Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: 🤖 Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -76,13 +78,14 @@ jobs:
           echo "org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8" >> ~/.gradle/gradle.properties
           echo "android.useAndroidX=true" >> ~/.gradle/gradle.properties
 
-      - name: 🔧 Sinkronisasi Kompatibilitas Versi Java ke 17
+      - name: 🔧 Sinkronisasi Kompatibilitas Java 21 & Patch Source
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
-          echo "=== MEMPERBAIKI TARGET JAVA DI SELURUH FILE GRADLE ==="
-          find android/ -type f -name "*.gradle" -exec sed -i 's/JavaVersion\.VERSION_21/JavaVersion.VERSION_17/g' {} +
-          find android/ -type f -name "*.gradle" -exec sed -i 's/VERSION_21/VERSION_17/g' {} +
-          find android/ -type f -name "*.gradle" -exec sed -i 's/JavaVersion\.VERSION_1_8/JavaVersion.VERSION_17/g' {} +
+          echo "=== MEMPERBAIKI KODE & GRADLE AGAR 100% KOMPATIBEL DENGAN JAVA 21 ==="
+          # Pastikan semua gradle file diselaraskan ke Java 21 (sesuai Capacitor 7 & JDK 21)
+          find android/ -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i 's/JavaVersion\.VERSION_1_8/JavaVersion.VERSION_21/g' {} +
+          find android/ -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i 's/JavaVersion\.VERSION_17/JavaVersion.VERSION_21/g' {} +
+          # Perbaiki potensi error pemanggilan super di inner class MainActivity.java
           find android/ -type f -name "MainActivity.java" -exec sed -i 's/MainActivity\.super\.onBackPressed();/finish();/g' {} +
           echo "=== VERIFIKASI FILE GRADLE ==="
           grep -rn "sourceCompatibility" android/ || true
@@ -100,7 +103,7 @@ jobs:
             npx cap copy android || true
           fi
           # Pastikan tidak ada file zip cadangan di dalam folder aset android
-          rm -f android/app/src/main/assets/public/*.zip 2>/dev/null || true
+          find android/ -path "*/assets/public/*.zip" -delete 2>/dev/null || true
 
       - name: 🔑 Berikan Izin Eksekusi Gradle Wrapper
         working-directory: ${{ steps.locate-project.outputs.workdir }}
@@ -112,8 +115,8 @@ jobs:
         run: |
           cd android
           chmod +x ./gradlew
-          # Build APK Debug (paling stabil & langsung bisa di-install)
-          ./gradlew assembleDebug --no-daemon --console=plain
+          # Build APK Debug (paling stabil & langsung bisa di-install di HP)
+          ./gradlew assembleDebug --no-daemon --console=plain --stacktrace
           # Build APK Release jika diinginkan
           ./gradlew assembleRelease --no-daemon --console=plain || true
 

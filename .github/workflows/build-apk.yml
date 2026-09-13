@@ -79,7 +79,7 @@ jobs:
           echo "android.useAndroidX=true" >> ~/.gradle/gradle.properties
           echo "android.builder.sdkDownload=true" >> ~/.gradle/gradle.properties
 
-      - name: 🔧 Auto-Patch Kompatibilitas Kode & Gradle
+      - name: 🔧 Auto-Patch Kompatibilitas Kode & Duplicate Classes
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
           echo "=== MENYELARASKAN FILE GRADLE KE JAVA 21 & SDK 35 ==="
@@ -97,7 +97,20 @@ jobs:
           # 4. Perbaiki potensi error pemanggilan onBackPressed()
           find android/ -type f -name "MainActivity.java" -exec sed -i 's/MainActivity\.super\.onBackPressed();/finish();/g' {} +
           
-          # 5. Cegah crash google-services jika file google-services.json tidak ada
+          # 5. HILANGKAN ERROR DUPLICATE CLASS KOTLIN (kotlin-stdlib-jdk7 dan kotlin-stdlib-jdk8)
+          python3 -c '
+          import glob
+          for f in glob.glob("android/**/build.gradle", recursive=True):
+              with open(f, "r", encoding="utf-8") as file:
+                  c = file.read()
+              if "kotlin-stdlib-jdk7" not in c:
+                  c += "\nconfigurations.all {\n    exclude group: \"org.jetbrains.kotlin\", module: \"kotlin-stdlib-jdk7\"\n    exclude group: \"org.jetbrains.kotlin\", module: \"kotlin-stdlib-jdk8\"\n}\n"
+                  with open(f, "w", encoding="utf-8") as file:
+                      file.write(c)
+                  print("Patched duplicate kotlin exclusion in:", f)
+          '
+
+          # 6. Cegah crash google-services jika file google-services.json tidak ada
           if [ ! -f "android/app/google-services.json" ]; then
             find android/app/ -name "build.gradle" -exec sed -i '/apply plugin:.*google-services.*/d' {} +
           fi

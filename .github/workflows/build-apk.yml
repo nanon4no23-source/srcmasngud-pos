@@ -76,6 +76,17 @@ jobs:
           echo "org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8" >> ~/.gradle/gradle.properties
           echo "android.useAndroidX=true" >> ~/.gradle/gradle.properties
 
+      - name: 🔧 Sinkronisasi Kompatibilitas Versi Java ke 17
+        working-directory: ${{ steps.locate-project.outputs.workdir }}
+        run: |
+          echo "=== MEMPERBAIKI TARGET JAVA DI SELURUH FILE GRADLE ==="
+          find android/ -type f -name "*.gradle" -exec sed -i 's/JavaVersion\.VERSION_21/JavaVersion.VERSION_17/g' {} +
+          find android/ -type f -name "*.gradle" -exec sed -i 's/VERSION_21/VERSION_17/g' {} +
+          find android/ -type f -name "*.gradle" -exec sed -i 's/JavaVersion\.VERSION_1_8/JavaVersion.VERSION_17/g' {} +
+          find android/ -type f -name "MainActivity.java" -exec sed -i 's/MainActivity\.super\.onBackPressed();/finish();/g' {} +
+          echo "=== VERIFIKASI FILE GRADLE ==="
+          grep -rn "sourceCompatibility" android/ || true
+
       - name: 📦 Install Node Dependencies
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |

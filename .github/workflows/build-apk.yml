@@ -55,11 +55,11 @@ jobs:
         with:
           node-version: 20
 
-      - name: ☕ Setup Java JDK 21 (Temurin)
+      - name: ☕ Setup Java JDK 17 (Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '17'
 
       - name: 🤖 Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -88,6 +88,7 @@ jobs:
           if [ -d "dist" ]; then
             npx cap copy android || true
           fi
+          # Pastikan tidak ada file zip cadangan di dalam folder aset android
           rm -f android/app/src/main/assets/public/*.zip 2>/dev/null || true
 
       - name: 🔑 Berikan Izin Eksekusi Gradle Wrapper
@@ -101,9 +102,9 @@ jobs:
           cd android
           chmod +x ./gradlew
           # Build APK Debug (paling stabil & langsung bisa di-install)
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleDebug --no-daemon --console=plain
           # Build APK Release jika diinginkan
-          ./gradlew assembleRelease --no-daemon --stacktrace || true
+          ./gradlew assembleRelease --no-daemon --console=plain || true
 
       - name: 📂 Kumpulkan & Gandakan File APK
         working-directory: ${{ steps.locate-project.outputs.workdir }}

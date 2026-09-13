@@ -23,7 +23,7 @@ jobs:
         run: |
           echo "=== MEMERIKSA BERKAS DI REPOSITORI ==="
           ls -la
-          # Jika folder android belum ada, ekstrak dari file zip
+          # Jika folder android belum ada di root, cari dan ekstrak file zip
           if [ ! -d "android" ]; then
             for z in *.zip; do
               if [ -f "$z" ]; then
@@ -32,7 +32,7 @@ jobs:
               fi
             done
           fi
-          # Bersihkan file zip yang ada di folder assets android agar tidak membebani kompilasi
+          # Bersihkan file zip cadangan dari assets android agar tidak membebani kompilasi
           rm -f android/app/src/main/assets/public/*.zip 2>/dev/null || true
           echo "=== STRUKTUR SETELAH PEMERIKSAAN ==="
           ls -la
@@ -55,16 +55,26 @@ jobs:
         with:
           node-version: 20
 
-      - name: ☕ Setup Java JDK 17 (Temurin)
+      - name: ☕ Setup Java JDK 21 (Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: 🤖 Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platforms;android-34 build-tools;34.0.0 cmdline-tools;latest'
+          packages: 'platforms;android-34 build-tools;34.0.0'
+
+      - name: 📜 Setujui Lisensi Android SDK
+        run: |
+          yes | sdkmanager --licenses || true
+
+      - name: ⚙️ Optimasi Konfigurasi Gradle
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8" >> ~/.gradle/gradle.properties
+          echo "android.useAndroidX=true" >> ~/.gradle/gradle.properties
 
       - name: 📦 Install Node Dependencies
         working-directory: ${{ steps.locate-project.outputs.workdir }}
@@ -74,12 +84,10 @@ jobs:
       - name: 🌐 Build Web App & Sync ke Android
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
-          # Build Vite Web App
           npm run build || echo "⚠️ Build Vite dilewati, menggunakan berkas aset web yang sudah ada"
           if [ -d "dist" ]; then
             npx cap copy android || true
           fi
-          # Pastikan tidak ada file zip cadangan di dalam bundle assets android
           rm -f android/app/src/main/assets/public/*.zip 2>/dev/null || true
 
       - name: 🔑 Berikan Izin Eksekusi Gradle Wrapper
@@ -91,19 +99,17 @@ jobs:
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
           cd android
+          chmod +x ./gradlew
+          # Build APK Debug (paling stabil & langsung bisa di-install)
           ./gradlew assembleDebug --no-daemon --stacktrace
+          # Build APK Release jika diinginkan
           ./gradlew assembleRelease --no-daemon --stacktrace || true
 
       - name: 📂 Kumpulkan & Gandakan File APK
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
           mkdir -p output-apk
-          if [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
-            cp android/app/build/outputs/apk/debug/app-debug.apk output-apk/srcmasngud-kasir-v3.0.apk
-          fi
-          if [ -f "android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            cp android/app/build/outputs/apk/release/app-release-unsigned.apk output-apk/srcmasngud-kasir-release-unsigned.apk
-          fi
+          find android/app/build/outputs/apk/ -name "*.apk" -exec cp {} output-apk/ \; || true
           echo "=== BERKAS APK HASIL BUILD ==="
           ls -lh output-apk/
 

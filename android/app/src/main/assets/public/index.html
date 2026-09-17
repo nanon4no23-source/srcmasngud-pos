@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SRC Masngud - Kasir Pintar Toko Kelontong</title>
+    <meta name="description" content="Sistem Kasir Pintar SRC Masngud - Dekat, Hemat, Bersahabat. Mendukung print thermal struk, scanner barcode, pesanan online, dan cloud sync." />
+    <meta property="og:title" content="SRC Masngud" />
+    <meta property="og:description" content="Sistem Kasir Pintar SRC Masngud - Dekat, Hemat, Bersahabat. Mendukung print thermal struk, scanner barcode, pesanan online, dan cloud sync." />
+    <meta name="theme-color" content="#b91c1c">
+    
+    <!-- Link Manifest PWA & Ikon Pintasan Layar Utama HP -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/png" href="/pwa-192x192.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <script type="module" crossorigin src="/assets/index-7sWtdU2j.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DmuWJSXe.css">
+  </head>
+  <body class="bg-slate-50 overscroll-none animate-fade-in">
+    <div id="root">
+      <!-- Loading & Boot Guardian Placeholder -->
+      <div id="boot-guardian-container" style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: system-ui, -apple-system, sans-serif; padding: 24px; box-sizing: border-box; text-align: center; background-color: #F8FAFC; color: #1E293B;">
+        <div style="background: white; border: 1px solid #E2E8F0; padding: 32px; border-radius: 20px; max-width: 420px; width: 100%; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05); display: flex; flex-direction: column; align-items: center; box-sizing: border-box;">
+          <!-- Spinning Loader -->
+          <div style="width: 48px; height: 48px; border: 4.5px solid #F1F5F9; border-top: 4.5px solid #DC2626; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px; box-sizing: border-box;"></div>
+          
+          <h2 style="font-size: 18px; font-weight: 850; margin: 0 0 8px 0; color: #0F172A; text-transform: uppercase; letter-spacing: 0.5px;">Membuka KASIR SRC MASNGUD...</h2>
+          <p id="boot-guideline-text" style="font-size: 11.5px; color: #64748B; margin: 0; line-height: 1.5; max-width: 320px;">Sedang menyiapkan database cerdas kasir Anda, mohon tunggu sebentar.</p>
+          
+          <!-- Boot Guardian Action panel (Default hidden, shown after timeout if blank) -->
+          <div id="boot-recovery-panel" style="display: none; margin-top: 24px; padding-top: 20px; border-top: 1px dashed #CBD5E1; width: 100%; box-sizing: border-box;">
+            <div style="display: inline-flex; padding: 8px; background: #FEF2F2; border-radius: 12px; color: #DC2626; margin-bottom: 12px; font-size: 18px;">⚠️</div>
+            <h4 style="font-size: 13.5px; font-weight: bold; margin: 0 0 4px 0; color: #991B1B;">Aplikasi Sulit Dimuat?</h4>
+            <p style="font-size: 10.5px; color: #7F1D1D; margin: 0 0 16px 0; line-height: 1.4;">Sistem mendeteksi koneksi internet lambat / drop, atau memori cache peramban bertabrakan di HP Anda.</p>
+            
+            <div style="display: flex; flex-direction: column; gap: 8px; width: 100%; box-sizing: border-box;">
+              <button onclick="if(confirm('🚨 PERINGATAN KERAS KEAMANAN DATA:\n\nTindakan ini akan MENGAPUS seluruh database luring (barang, riwayat nota, & member) di perangkat/HP ini secara total!\n\nJika Anda BELUM menyelaraskan data Anda ke Cloud (Firestore/Google Drive), seluruh data lokal Anda akan hilang selamanya.\n\nApakah Anda benar-benar yakin ingin membersihkan memori cache perangkat ini?')) { localStorage.clear(); sessionStorage.clear(); window.location.reload(); }" style="width: 100%; padding: 11px; background: #DC2626; color: white; border: none; font-weight: bold; font-size: 11.5px; border-radius: 10px; cursor: pointer; transition: background 0.15s ease;">
+                🔧 Reset Memori &amp; Mulai Baru (100% Berhasil)
+              </button>
+              <button onclick="window.location.reload();" style="width: 100%; padding: 11px; background: #0F172A; color: white; border: none; font-weight: bold; font-size: 11.5px; border-radius: 10px; cursor: pointer; transition: background 0.15s ease;">
+                🔄 Muat Ulang Laman Saja
+              </button>
+            </div>
+            <p style="font-size: 9px; color: #94A3B8; margin-top: 12px; line-height: 1.3;">*Langkah ini aman dilakukan mandiri apabila aplikasi stuck/hang akibat browser lawas.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <style>
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    </style>
+    
+    <script>
+      // Boot Guardian logic: If React hasn't replaced `#boot-guardian-container` after 10 seconds, show recovery panel
+      setTimeout(function() {
+        var panel = document.getElementById('boot-recovery-panel');
+        var text = document.getElementById('boot-guideline-text');
+        if (panel && text && document.getElementById('boot-guardian-container')) {
+          panel.style.display = 'block';
+          text.innerText = 'Waktu muat melampaui batas normal. Silakan picu tombol penyelamat opsi di bawah.';
+        }
+      }, 10000);
+    </script>
+    <script>
+      var isNativeApp = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) || 
+                        window.location.hostname === 'localhost' || 
+                        window.location.protocol === 'capacitor:' || 
+                        window.location.protocol === 'file:' ||
+                        navigator.userAgent.indexOf('wv') > -1 ||
+                        navigator.userAgent.indexOf('Android') > -1 && navigator.userAgent.indexOf('Version/') > -1;
+      
+      if (!isNativeApp && 'serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then((reg) => {
+              reg.update();
+            })
+            .catch((err) => console.warn('PWA SW tidak aktif:', err));
+        });
+      } else if (isNativeApp && 'serviceWorker' in navigator) {
+        // Pada native Android WebView, bersihkan semua Service Worker lama agar tidak men-cache aset usang
+        navigator.serviceWorker.getRegistrations().then(function(regs) {
+          for (var r of regs) {
+            r.unregister();
+          }
+        }).catch(function() {});
+      }
+    </script>
+  </body>
+</html>
+

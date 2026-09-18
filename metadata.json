@@ -1,0 +1,6 @@
+{
+  "name": "SRC Masngud",
+  "description": "Sistem Kasir Pintar SRC Masngud - Dekat, Hemat, Bersahabat. Mendukung print thermal struk, scanner barcode, pesanan online, dan cloud sync.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

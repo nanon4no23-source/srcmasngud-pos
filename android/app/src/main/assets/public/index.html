@@ -13,8 +13,8 @@
     <link rel="manifest" href="/manifest.json" />
     <link rel="icon" type="image/png" href="/pwa-192x192.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <script type="module" crossorigin src="/assets/index-7sWtdU2j.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DmuWJSXe.css">
+    <script type="module" crossorigin src="/assets/index-ComgSIJb.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BXyg_ghX.css">
   </head>
   <body class="bg-slate-50 overscroll-none animate-fade-in">
     <div id="root">
@@ -73,21 +73,28 @@
                         navigator.userAgent.indexOf('wv') > -1 ||
                         navigator.userAgent.indexOf('Android') > -1 && navigator.userAgent.indexOf('Version/') > -1;
       
-      if (!isNativeApp && 'serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then((reg) => {
-              reg.update();
-            })
-            .catch((err) => console.warn('PWA SW tidak aktif:', err));
-        });
-      } else if (isNativeApp && 'serviceWorker' in navigator) {
-        // Pada native Android WebView, bersihkan semua Service Worker lama agar tidak men-cache aset usang
-        navigator.serviceWorker.getRegistrations().then(function(regs) {
-          for (var r of regs) {
-            r.unregister();
-          }
-        }).catch(function() {});
+      var isDevOrPreview = window.location.hostname === 'localhost' || 
+                            window.location.hostname.includes('run.app') || 
+                            window.location.hostname.includes('google.com') ||
+                            window.location.hostname.includes('127.0.0.1');
+      
+      if ('serviceWorker' in navigator) {
+        if (isNativeApp || isDevOrPreview) {
+          // Bersihkan semua Service Worker di dev/preview/Android WebView agar tidak men-cache aset dev yang dinamis
+          navigator.serviceWorker.getRegistrations().then(function(regs) {
+            for (var r of regs) {
+              r.unregister();
+            }
+          }).catch(function() {});
+        } else {
+          window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js')
+              .then((reg) => {
+                reg.update();
+              })
+              .catch((err) => console.warn('PWA SW tidak aktif:', err));
+          });
+        }
       }
     </script>
   </body>

@@ -1,0 +1,100 @@
+{
+  "id": "/",
+  "name": "KASIR SRC MASNGUD - Toko Kelontong Modern",
+  "short_name": "SRC MASNGUD",
+  "description": "Sistem Kasir Pintar SRC Masngud - Dekat, Hemat, Bersahabat.",
+  "lang": "id",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#b91c1c",
+  "theme_color": "#b91c1c",
+  "categories": ["business", "finance", "shopping", "utilities"],
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshot-wide.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Tampilan Kasir Desktop SRC MASNGUD"
+    },
+    {
+      "src": "/screenshot-narrow.png",
+      "sizes": "720x1280",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Tampilan Kasir Mobile SRC MASNGUD"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Buka Transaksi Kasir",
+      "short_name": "Kasir",
+      "description": "Mulai transaksi penjualan kasir",
+      "url": "/?tab=kasir",
+      "icons": [
+        {
+          "src": "/pwa-192x192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Kelola Inventori Stok",
+      "short_name": "Stok",
+      "description": "Lihat inventori dan stok barang",
+      "url": "/?tab=stok",
+      "icons": [
+        {
+          "src": "/pwa-192x192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Riwayat & Rekap Harian",
+      "short_name": "Riwayat",
+      "description": "Lihat riwayat transaksi dan omset harian",
+      "url": "/?tab=riwayat",
+      "icons": [
+        {
+          "src": "/pwa-192x192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
+}

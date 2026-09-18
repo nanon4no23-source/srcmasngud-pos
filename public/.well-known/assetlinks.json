@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.srcmasngud.kasir",
+      "sha256_cert_fingerprints": [
+        "14:6D:E9:7D:0F:7B:66:81:4A:27:0B:4D:9E:C1:B4:9C:2F:5D:8D:1B:32:0C:44:98:76:85:2B:65:D4:56:88:67"
+      ]
+    }
+  }
+]

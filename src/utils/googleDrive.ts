@@ -4,6 +4,10 @@ import {
   signInWithPopup, 
   signInWithRedirect,
   getRedirectResult,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signInAnonymously,
+  updateProfile,
   GoogleAuthProvider, 
   onAuthStateChanged, 
   User 
@@ -44,6 +48,8 @@ export const initDriveAuth = (
             localStorage.setItem('cfg_drive_access_token', cachedAccessToken);
             localStorage.setItem('cfg_drive_access_token_time', String(Date.now()));
             onAuthSuccess(result.user, credential.accessToken);
+          } else {
+            onAuthSuccess(result.user, '');
           }
         }
       })
@@ -61,11 +67,9 @@ export const initDriveAuth = (
       if (cachedAccessToken && !isExpired) {
         onAuthSuccess(user, cachedAccessToken);
       } else {
-        // Token has expired or state needs re-login
-        cachedAccessToken = null;
-        localStorage.removeItem('cfg_drive_access_token');
-        localStorage.removeItem('cfg_drive_access_token_time');
-        onAuthFailure();
+        // User is still authenticated in Firebase Auth (e.g. Email/Password, Anonymous, or Drive token expired)
+        // Pass empty token for Drive, but keep user active for Firestore sync!
+        onAuthSuccess(user, '');
       }
     } else {
       cachedAccessToken = null;
@@ -74,6 +78,44 @@ export const initDriveAuth = (
       onAuthFailure();
     }
   });
+};
+
+/**
+ * Signs in using Email and Password (100% compatible with Android APK without domain restrictions)
+ */
+export const emailSignIn = async (email: string, pass: string): Promise<User> => {
+  const cred = await signInWithEmailAndPassword(auth, email.trim(), pass);
+  return cred.user;
+};
+
+/**
+ * Registers a new Cloud account using Email and Password
+ */
+export const emailSignUp = async (email: string, pass: string, storeName?: string): Promise<User> => {
+  const cred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
+  if (storeName && cred.user) {
+    try {
+      await updateProfile(cred.user, { displayName: storeName.trim() });
+    } catch (e) {
+      console.warn("Could not update profile name:", e);
+    }
+  }
+  return cred.user;
+};
+
+/**
+ * Signs in anonymously for instant quick testing / guest sync
+ */
+export const anonymousSignIn = async (storeName?: string): Promise<User> => {
+  const cred = await signInAnonymously(auth);
+  if (storeName && cred.user) {
+    try {
+      await updateProfile(cred.user, { displayName: storeName.trim() });
+    } catch (e) {
+      console.warn("Could not update profile name:", e);
+    }
+  }
+  return cred.user;
 };
 
 /**

@@ -85,7 +85,10 @@ import {
   googleSignOut, 
   uploadBackupToDrive, 
   downloadBackupFromDrive, 
-  searchDriveBackupFile 
+  searchDriveBackupFile,
+  emailSignIn,
+  emailSignUp,
+  anonymousSignIn
 } from './utils/googleDrive';
 import {
   syncBarangToCloud,
@@ -2643,6 +2646,12 @@ export default function App() {
     return localStorage.getItem('cfg_drive_autosync') === 'true';
   });
   const [isDriveLoading, setIsDriveLoading] = useState<boolean>(false);
+  const [cloudAuthTab, setCloudAuthTab] = useState<'email' | 'google'>('email');
+  const [authEmail, setAuthEmail] = useState<string>('');
+  const [authPassword, setAuthPassword] = useState<string>('');
+  const [authStoreName, setAuthStoreName] = useState<string>('SRC MASNGUD');
+  const [isRegisterMode, setIsRegisterMode] = useState<boolean>(false);
+  const [cloudDomainNotice, setCloudDomainNotice] = useState<string | null>(null);
 
   // --- FIRESTORE REAL-TIME MULTI-HP STATES ---
   const [isFirestoreSync, setIsFirestoreSync] = useState<boolean>(() => {
@@ -3287,11 +3296,128 @@ export default function App() {
       }
     } catch (err: any) {
       const errMsg = err?.message || String(err);
-      if (errMsg.includes('popup-blocked') || errMsg.includes('disallowed_useragent')) {
-        showToast("⚠️ Popup Google diblokir di HP. Mengalihkan ke login aman...");
+      if (errMsg.includes('unauthorized-domain')) {
+        setCloudDomainNotice("Domain APK Android dibatasi oleh kebijakan OAuth Google. Silakan gunakan tab 'Akun Toko (Email & Sandi)' di bawah ini yang 100% didukung di semua HP Android tanpa pembatasan domain Google!");
+        setCloudAuthTab('email');
+        showToast("⚠️ Domain APK dibatasi Google. Gunakan tab 'Akun Toko' untuk login!");
+      } else if (errMsg.includes('popup-blocked') || errMsg.includes('disallowed_useragent')) {
+        setCloudDomainNotice("Browser/WebView HP memblokir popup Google. Gunakan opsi 'Akun Toko (Email & Sandi)' agar dapat masuk langsung.");
+        setCloudAuthTab('email');
+        showToast("⚠️ Popup Google diblokir di HP. Gunakan 'Akun Toko' di sebelah!");
       } else {
         showToast(`❌ Gagal masuk Google: ${errMsg}`);
       }
+    } finally {
+      setIsDriveLoading(false);
+    }
+  };
+
+  const handleEmailAuth = async (isRegister: boolean) => {
+    if (!authEmail.trim() || !authPassword.trim()) {
+      showToast("⚠️ Mohon isi email toko dan kata sandi.");
+      return;
+    }
+    if (authPassword.length < 6) {
+      showToast("⚠️ Kata sandi minimal 6 karakter.");
+      return;
+    }
+    try {
+      setIsDriveLoading(true);
+      setCloudDomainNotice(null);
+      let user: any;
+      if (isRegister) {
+        user = await emailSignUp(authEmail, authPassword, authStoreName || 'SRC MASNGUD');
+        showToast("🎉 Berhasil membuat Akun Toko Cloud!");
+      } else {
+        user = await emailSignIn(authEmail, authPassword);
+        showToast(`👋 Tersambung sebagai ${user.displayName || user.email}`);
+      }
+      setDriveUser(user);
+      setDriveToken('');
+      setIsFirestoreSync(true);
+      localStorage.setItem('cfg_firestore_sync', 'true');
+    } catch (err: any) {
+      console.error("Email auth error:", err);
+      const code = err?.code || '';
+      if (code === 'auth/email-already-in-use') {
+        showToast("⚠️ Email sudah terdaftar. Silakan klik 'Masuk' atau gunakan email lain.");
+      } else if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
+        showToast("❌ Email atau kata sandi salah. Silakan periksa kembali.");
+      } else if (code === 'auth/invalid-email') {
+        showToast("⚠️ Format email tidak valid.");
+      } else {
+        showToast(`❌ Gagal masuk: ${err?.message || err}`);
+      }
+    } finally {
+      setIsDriveLoading(false);
+    }
+  };
+
+  const handleAnonymousAuth = async () => {
+    try {
+      setIsDriveLoading(true);
+      setCloudDomainNotice(null);
+      const user = await anonymousSignIn(authStoreName || 'Kasir Tamu');
+      setDriveUser(user);
+      setDriveToken('');
+      setIsFirestoreSync(true);
+      localStorage.setItem('cfg_firestore_sync', 'true');
+      showToast("⚡ Tersambung dengan Akun Cepat Cloud!");
+    } catch (err: any) {
+      showToast(`❌ Gagal masuk instan: ${err?.message || err}`);
+    } finally {
+      setIsDriveLoading(false);
+    }
+  };
+
+  const handleBackupToFirestore = async () => {
+    if (!driveUser) return;
+    try {
+      setIsDriveLoading(true);
+      await initializeCloudDatabase(driveUser.uid, { barang, pelanggan, transaksi });
+      await syncSettingsToCloud(driveUser.uid, { config, minBelanja: minBelanjaPerPoin, nilaiPoin: nilaiRupiahPerPoin });
+      const timeStr = new Date().toLocaleString('id-ID');
+      setDriveLastSync(timeStr);
+      localStorage.setItem('cfg_drive_last_sync', timeStr);
+      showToast("☁️ Berhasil mencadangkan database HP ke Cloud Firestore!");
+    } catch (err: any) {
+      showToast(`❌ Gagal mencadangkan: ${err?.message || err}`);
+    } finally {
+      setIsDriveLoading(false);
+    }
+  };
+
+  const handleRestoreFromFirestore = async () => {
+    if (!driveUser) return;
+    try {
+      setIsDriveLoading(true);
+      const cloudData = await fetchCloudDatabase(driveUser.uid);
+      if (cloudData && (cloudData.barang.length > 0 || cloudData.pelanggan.length > 0 || cloudData.transaksi.length > 0)) {
+        if (Array.isArray(cloudData.barang) && cloudData.barang.length > 0) {
+          setBarang(cloudData.barang);
+          localStorage.setItem('src_barang', JSON.stringify(cloudData.barang));
+        }
+        if (Array.isArray(cloudData.pelanggan) && cloudData.pelanggan.length > 0) {
+          setPelanggan(cloudData.pelanggan);
+          localStorage.setItem('src_pelanggan', JSON.stringify(cloudData.pelanggan));
+        }
+        if (Array.isArray(cloudData.transaksi) && cloudData.transaksi.length > 0) {
+          setTransaksi(cloudData.transaksi);
+          localStorage.setItem('src_transaksi', JSON.stringify(cloudData.transaksi));
+        }
+        if (cloudData.settings?.config) {
+          setConfig(cloudData.settings.config);
+          localStorage.setItem('cfg_pos_struk', JSON.stringify(cloudData.settings.config));
+        }
+        const timeStr = new Date().toLocaleString('id-ID');
+        setDriveLastSync(timeStr);
+        localStorage.setItem('cfg_drive_last_sync', timeStr);
+        showToast("☁️ Berhasil memulihkan data dari Cloud ke HP!");
+      } else {
+        showToast("⚠️ Belum ada data cadangan tersimpan di Cloud.");
+      }
+    } catch (err: any) {
+      showToast(`❌ Gagal memulihkan: ${err?.message || err}`);
     } finally {
       setIsDriveLoading(false);
     }
@@ -3303,7 +3429,7 @@ export default function App() {
       await googleSignOut();
       setDriveUser(null);
       setDriveToken(null);
-      showToast("👋 Terputus dari Google Drive.");
+      showToast("👋 Terputus dari Akun Cloud.");
     } catch (err: any) {
       showToast(`❌ Gagal memutuskan sambungan: ${err?.message || err}`);
     } finally {
@@ -20396,11 +20522,14 @@ export default function App() {
                 Koneksikan &amp; cadangkan database kasir SRC MASNGUD ke awan. Sinkronisasi multi-device membantu menyamakan stok barang antar beberapa HP secara instan.
               </p>
 
-              {/* GOOGLE DRIVE BACKUP & RECOVERY STORAGE */}
-              <div className="bg-gradient-to-br from-indigo-50/50 to-blue-50/70 border border-blue-150 p-4 rounded-2xl space-y-3.5 shadow-sm relative overflow-hidden">
+              {/* CLOUD STORAGE & MULTI-HP SYNC */}
+              <div className="bg-gradient-to-br from-indigo-50/60 via-blue-50/50 to-slate-50 border border-indigo-150 p-4 rounded-2xl space-y-3.5 shadow-sm relative overflow-hidden">
                 {isDriveLoading && (
-                  <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center z-10">
-                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-indigo-600 border-t-transparent"></div>
+                  <div className="absolute inset-0 bg-white/70 backdrop-blur-[2px] flex items-center justify-center z-20">
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="animate-spin rounded-full h-6 w-6 border-2 border-indigo-600 border-t-transparent"></div>
+                      <span className="text-[10px] font-bold text-indigo-900">Menghubungkan ke Cloud...</span>
+                    </div>
                   </div>
                 )}
                 
@@ -20408,141 +20537,216 @@ export default function App() {
                   <div className="flex items-center gap-2">
                     <Cloud className="w-4 h-4 text-indigo-600 animate-bounce" />
                     <label className="text-[11px] uppercase tracking-wider font-extrabold text-indigo-950 block">
-                      Google Drive Cloud 
+                      Cloud Sync &amp; Multi-HP
                     </label>
                   </div>
                   {driveUser ? (
-                    <span className="text-[8.5px] text-emerald-700 font-extrabold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200/50 flex items-center gap-1">
+                    <span className="text-[8.5px] text-emerald-700 font-extrabold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
                       <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span>
-                      Aktif
+                      Aktif Terhubung
                     </span>
                   ) : (
                     <span className="text-[8.5px] text-slate-500 font-extrabold bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200 flex items-center gap-1">
-                      Terputus
+                      Belum Terhubung
                     </span>
                   )}
                 </div>
 
                 {!driveUser ? (
-                  <div className="space-y-2.5">
-                    <p className="text-[10px] text-slate-500 leading-relaxed text-left">
-                      Hubungkan akun Google Drive pribadi Anda untuk menyinkronkan data stok barang, database member, dan riwayat transaksi secara aman agar tidak hilang saat cache HP dibersihkan.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={handleLoginDrive}
-                      className="w-full flex items-center justify-center gap-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-bold py-2 px-3 rounded-xl transition-all shadow-sm cursor-pointer"
-                    >
-                      <svg className="w-4 h-4" viewBox="0 0 24 24">
-                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                        <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.84z" />
-                        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-                      </svg>
-                      Koneksikan Akun Google Drive
-                    </button>
+                  <div className="space-y-3">
+                    {/* Cloud Auth Tabs */}
+                    <div className="flex bg-slate-200/70 p-1 rounded-xl gap-1 text-[10px] font-bold">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCloudAuthTab('email');
+                          setCloudDomainNotice(null);
+                        }}
+                        className={`flex-1 py-1.5 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                          cloudAuthTab === 'email'
+                            ? 'bg-white text-indigo-900 shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        <span>🏪 Akun Toko (Email)</span>
+                        <span className="bg-emerald-100 text-emerald-800 text-[8px] px-1 py-0.2 rounded font-extrabold">APK HP</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCloudAuthTab('google')}
+                        className={`flex-1 py-1.5 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                          cloudAuthTab === 'google'
+                            ? 'bg-white text-indigo-900 shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        <span>🌐 Google Drive</span>
+                      </button>
+                    </div>
+
+                    {cloudDomainNotice && (
+                      <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-left text-amber-900 space-y-1">
+                        <div className="flex items-center gap-1 text-[10.5px] font-extrabold text-amber-800">
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-600" />
+                          <span>Pemberitahuan Login APK:</span>
+                        </div>
+                        <p className="text-[9.5px] leading-relaxed">
+                          {cloudDomainNotice}
+                        </p>
+                      </div>
+                    )}
+
+                    {cloudAuthTab === 'email' ? (
+                      <div className="bg-white/80 border border-indigo-100 p-3 rounded-xl space-y-2.5 text-left">
+                        <div className="text-[10px] font-medium text-slate-600">
+                          {isRegisterMode 
+                            ? 'Daftarkan akun Cloud Toko Anda untuk menyinkronkan data antar HP kasir secara otomatis.'
+                            : 'Masuk dengan email & kata sandi toko untuk mengaktifkan sinkronisasi otomatis multi-HP.'}
+                        </div>
+
+                        <div className="space-y-2">
+                          {isRegisterMode && (
+                            <div>
+                              <label className="text-[9px] font-extrabold text-slate-600 uppercase block mb-0.5">
+                                Nama Toko / Kasir
+                              </label>
+                              <input
+                                type="text"
+                                value={authStoreName}
+                                onChange={(e) => setAuthStoreName(e.target.value)}
+                                placeholder="Contoh: SRC MASNGUD"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-medium focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
+                              />
+                            </div>
+                          )}
+
+                          <div>
+                            <label className="text-[9px] font-extrabold text-slate-600 uppercase block mb-0.5">
+                              Email Toko / Kasir
+                            </label>
+                            <input
+                              type="email"
+                              value={authEmail}
+                              onChange={(e) => setAuthEmail(e.target.value)}
+                              placeholder="contoh: kasir@srcmasngud.com"
+                              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-medium focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[9px] font-extrabold text-slate-600 uppercase block mb-0.5">
+                              Kata Sandi (Minimal 6 karakter)
+                            </label>
+                            <input
+                              type="password"
+                              value={authPassword}
+                              onChange={(e) => setAuthPassword(e.target.value)}
+                              placeholder="••••••••"
+                              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-medium focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="pt-1 space-y-2">
+                          <button
+                            type="button"
+                            onClick={() => handleEmailAuth(isRegisterMode)}
+                            className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                          >
+                            <Cloud className="w-3.5 h-3.5" />
+                            <span>{isRegisterMode ? 'Daftar Akun Cloud Toko' : 'Masuk ke Cloud Toko'}</span>
+                          </button>
+
+                          <div className="flex items-center justify-between text-[9.5px]">
+                            <button
+                              type="button"
+                              onClick={() => setIsRegisterMode(!isRegisterMode)}
+                              className="text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer"
+                            >
+                              {isRegisterMode ? 'Sudah punya akun? Masuk di sini' : 'Belum punya akun? Buat Akun Baru'}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={handleAnonymousAuth}
+                              className="text-slate-500 hover:text-slate-800 font-bold cursor-pointer"
+                            >
+                              ⚡ Masuk Cepat (Guest)
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="bg-indigo-50/60 p-2 rounded-lg border border-indigo-100/80 text-[9px] text-indigo-900 leading-normal">
+                          💡 <strong>Tips Multi-HP:</strong> Masukkan email &amp; sandi yang sama di HP kasir lain agar stok, member, transaksi, dan pesanan online tersinkronkan otomatis!
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-white/80 border border-indigo-100 p-3 rounded-xl space-y-3 text-left">
+                        <p className="text-[10px] text-slate-500 leading-relaxed">
+                          Hubungkan akun Google pribadi Anda untuk mencadangkan file database ke Google Drive.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={handleLoginDrive}
+                          className="w-full flex items-center justify-center gap-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-bold py-2 px-3 rounded-xl transition-all shadow-sm cursor-pointer"
+                        >
+                          <svg className="w-4 h-4" viewBox="0 0 24 24">
+                            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                            <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.84z" />
+                            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                          </svg>
+                          Koneksikan Akun Google Drive
+                        </button>
+                        <div className="bg-slate-100 p-2 rounded-lg text-[8.5px] text-slate-500 leading-normal">
+                          ℹ️ Jika login Google di APK menampilkan notifikasi <em>auth/unauthorized-domain</em>, silakan gunakan tab <strong>Akun Toko (Email)</strong> di atas yang 100% aktif di APK Android.
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    <div className="flex items-center gap-2.5 bg-white/70 border border-slate-150 p-2 rounded-xl">
+                    <div className="flex items-center gap-2.5 bg-white/80 border border-slate-150 p-2.5 rounded-xl shadow-xs">
                       {driveUser.photoURL ? (
-                        <img referrerPolicy="no-referrer" src={driveUser.photoURL} alt="Google" className="w-8 h-8 rounded-full border border-slate-200" />
+                        <img referrerPolicy="no-referrer" src={driveUser.photoURL} alt="User" className="w-9 h-9 rounded-full border border-slate-200 shrink-0" />
                       ) : (
-                        <div className="w-8 h-8 rounded-full bg-indigo-500 text-white flex items-center justify-center font-bold text-sm">
-                          {driveUser.displayName?.charAt(0) || 'G'}
+                        <div className="w-9 h-9 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-sm shrink-0">
+                          {driveUser.displayName ? driveUser.displayName.charAt(0).toUpperCase() : (driveUser.email ? driveUser.email.charAt(0).toUpperCase() : 'C')}
                         </div>
                       )}
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[10px] font-bold text-slate-800 truncate text-left">{driveUser.displayName}</div>
-                        <div className="text-[9px] text-slate-500 truncate text-left">{driveUser.email}</div>
+                      <div className="flex-1 min-w-0 text-left">
+                        <div className="text-[11px] font-bold text-slate-800 truncate">
+                          {driveUser.displayName || (driveUser.isAnonymous ? 'Kasir Cepat (Guest)' : 'Akun Toko Cloud')}
+                        </div>
+                        <div className="text-[9.5px] text-slate-500 truncate">
+                          {driveUser.email || (driveUser.isAnonymous ? 'Akun Anonim' : driveUser.uid)}
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="text-[8px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.2 rounded">
+                            🔥 Real-Time Multi-HP
+                          </span>
+                          {driveToken && (
+                            <span className="text-[8px] bg-blue-100 text-blue-800 font-extrabold px-1.5 py-0.2 rounded">
+                              Google Drive
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <button
                         type="button"
                         onClick={handleLogoutDrive}
-                        className="text-[9px] font-bold text-rose-600 hover:text-rose-700 bg-rose-50 px-2 py-1 rounded-lg border border-rose-100 cursor-pointer shrink-0"
+                        className="text-[9px] font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-2.5 py-1.5 rounded-lg border border-rose-200 cursor-pointer shrink-0 transition-colors"
                       >
-                        Diskonek
+                        Keluar
                       </button>
                     </div>
 
-                    {/* Sync Controls */}
-                    {showBackupConfirm ? (
-                      <div className="p-3 border border-indigo-200 bg-indigo-50/50 rounded-xl space-y-2 text-left animate-in fade-in duration-100">
-                        <p className="text-[10px] text-indigo-950 font-bold leading-normal font-sans">
-                          Apakah benar Anda ingin <strong>mencadangkan (menyimpan)</strong> database HP ini ke Google Drive? Data lama di Google Drive Anda akan ditimpa.
-                        </p>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setShowBackupConfirm(false)}
-                            className="flex-1 py-1 px-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-[10px] font-extrabold rounded-lg select-none cursor-pointer text-center"
-                          >
-                            Batal
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setShowBackupConfirm(false);
-                              handleBackupToDrive(true);
-                            }}
-                            className="flex-1 py-1 px-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-extrabold rounded-lg select-none cursor-pointer text-center shadow-sm"
-                          >
-                            Ya, Simpan
-                          </button>
-                        </div>
-                      </div>
-                    ) : showRestoreConfirm ? (
-                      <div className="p-3 border border-rose-200 bg-rose-50/50 rounded-xl space-y-2 text-left animate-in fade-in duration-100">
-                        <p className="text-[10px] leading-normal font-sans text-rose-950 font-bold">
-                          ⚠️ PERINGATAN: Seluruh produk lokal, member &amp; transaksi saat ini di HP ini akan digantikan sepenuhnya oleh data dari Google Drive! Lanjutkan?
-                        </p>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setShowRestoreConfirm(false)}
-                            className="flex-1 py-1 px-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-[10px] font-extrabold rounded-lg select-none cursor-pointer text-center"
-                          >
-                            Batal
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setShowRestoreConfirm(false);
-                              handleRestoreFromDrive(true);
-                            }}
-                            className="flex-1 py-1 px-2.5 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-extrabold rounded-lg select-none cursor-pointer text-center shadow-sm"
-                          >
-                            Ya, Pulihkan
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleBackupToDrive(false)}
-                          className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-extrabold rounded-xl shadow-sm transition-all cursor-pointer"
-                        >
-                          <Upload className="w-3.5 h-3.5" />
-                          Cadangkan Data
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleRestoreFromDrive(false)}
-                          className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-extrabold rounded-xl shadow-sm transition-all cursor-pointer"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          Muat dari Cloud
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Real-time Firestore Multi-HP Toggle */}
-                    <div className="flex flex-col bg-gradient-to-r from-emerald-50/50 to-teal-50/50 border border-emerald-150 p-2.5 rounded-xl text-xs space-y-2">
+                    {/* Firestore Real-Time Multi-HP Switch */}
+                    <div className="flex flex-col bg-gradient-to-r from-emerald-50/70 to-teal-50/70 border border-emerald-200 p-2.5 rounded-xl text-xs space-y-2">
                       <div className="flex items-center justify-between">
                         <div className="space-y-0.5 text-left">
-                          <span className="font-bold text-emerald-950 text-[10px] block">🔥 Real-Time Cloud Sync (Multi-HP)</span>
-                          <span className="text-[9px] text-emerald-700 block">Sinkronisasi instan bebas tabrakan data (Firestore)</span>
+                          <span className="font-extrabold text-emerald-950 text-[10.5px] block">🔥 Real-Time Cloud Sync (Multi-HP)</span>
+                          <span className="text-[9px] text-emerald-700 block">Stok barang &amp; transaksi sinkron detik itu juga ke HP lain</span>
                         </div>
                         <label className="relative inline-flex items-center cursor-pointer select-none">
                           <input 
@@ -20556,12 +20760,12 @@ export default function App() {
                       </div>
 
                       {isFirestoreSync && (
-                        <div className="border-t border-emerald-200/40 pt-2 flex items-center justify-between text-[9.5px] text-emerald-900">
-                          <span className="font-bold text-left">Mode Resolusi Konflik:</span>
+                        <div className="border-t border-emerald-200/50 pt-2 flex items-center justify-between text-[9.5px] text-emerald-900">
+                          <span className="font-bold text-left">Resolusi Konflik:</span>
                           <select
                             value={firestoreMergeMode}
                             onChange={(e) => handleToggleMergeMode(e.target.value as 'auto' | 'manual')}
-                            className="bg-white border border-emerald-200 rounded px-1.5 py-0.5 text-[9px] font-extrabold text-emerald-950 focus:outline-none cursor-pointer"
+                            className="bg-white border border-emerald-200 rounded px-1.5 py-0.5 text-[9px] font-extrabold text-emerald-950 focus:outline-none cursor-pointer shadow-2xs"
                           >
                             <option value="auto">⚡ Otomatis (Rekomendasi)</option>
                             <option value="manual">❓ Tanya Saya (Manual)</option>
@@ -20570,27 +20774,66 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* Auto Sync Toggle */}
-                    <div className="flex items-center justify-between bg-white/50 border border-slate-150 p-2.5 rounded-xl text-xs">
-                      <div className="space-y-0.5">
-                        <span className="font-bold text-slate-700 text-[10px] block text-left">🔄 Simpan ke Google Drive (Backup)</span>
-                        <span className="text-[9px] text-slate-500 block text-left">Cadangkan database berkala ke Google Drive</span>
+                    {/* Backup & Restore Buttons */}
+                    <div className="space-y-2">
+                      <span className="text-[9px] uppercase tracking-wider font-extrabold text-slate-500 block text-left">
+                        Aksi Cadangan Cloud
+                      </span>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (driveToken) {
+                              handleBackupToDrive(false);
+                            } else {
+                              handleBackupToFirestore();
+                            }
+                          }}
+                          className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-extrabold rounded-xl shadow-sm transition-all cursor-pointer"
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>Cadangkan ke Cloud</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (driveToken) {
+                              handleRestoreFromDrive(false);
+                            } else {
+                              handleRestoreFromFirestore();
+                            }
+                          }}
+                          className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-extrabold rounded-xl shadow-sm transition-all cursor-pointer"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Muat dari Cloud</span>
+                        </button>
                       </div>
-                      <label className="relative inline-flex items-center cursor-pointer select-none">
-                        <input 
-                          type="checkbox" 
-                          checked={isDriveAutoSync}
-                          onChange={(e) => handleToggleAutoSync(e.target.checked)}
-                          className="sr-only peer" 
-                        />
-                        <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
-                      </label>
                     </div>
 
+                    {/* Auto Sync Toggle for Google Drive if token exists */}
+                    {driveToken && (
+                      <div className="flex items-center justify-between bg-white/50 border border-slate-150 p-2.5 rounded-xl text-xs">
+                        <div className="space-y-0.5">
+                          <span className="font-bold text-slate-700 text-[10px] block text-left">🔄 Backup Berkala ke Google Drive</span>
+                          <span className="text-[9px] text-slate-500 block text-left">Cadangkan berkala otomatis ke file Drive</span>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer select-none">
+                          <input 
+                            type="checkbox" 
+                            checked={isDriveAutoSync}
+                            onChange={(e) => handleToggleAutoSync(e.target.checked)}
+                            className="sr-only peer" 
+                          />
+                          <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                        </label>
+                      </div>
+                    )}
+
                     {/* Status Log */}
-                    <div className="text-[9px] text-indigo-805 bg-indigo-50/80 p-2 rounded-lg border border-indigo-100 flex items-center justify-between font-medium">
-                      <span>Drive Terakhir Dicadangkan:</span>
-                      <span className="font-mono font-bold text-indigo-900">
+                    <div className="text-[9px] text-indigo-900 bg-indigo-50/90 p-2 rounded-lg border border-indigo-100 flex items-center justify-between font-medium">
+                      <span>Terakhir Dicadangkan:</span>
+                      <span className="font-mono font-bold text-indigo-950">
                         {driveLastSync || 'Belum Pernah'}
                       </span>
                     </div>

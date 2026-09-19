@@ -37,8 +37,21 @@ export const initDriveAuth = (
   onAuthSuccess: (user: User, token: string) => void,
   onAuthFailure: () => void
 ) => {
-  // Capture redirect result if coming back from redirect sign-in
+  // Check if a Store Account was already authenticated
   if (typeof window !== 'undefined') {
+    const storedStore = localStorage.getItem('cfg_store_auth_user');
+    if (storedStore) {
+      try {
+        const parsed = JSON.parse(storedStore);
+        if (parsed && parsed.uid) {
+          onAuthSuccess(parsed as any, '');
+        }
+      } catch (e) {
+        console.warn("Parse stored store user failed:", e);
+      }
+    }
+
+    // Capture redirect result if coming back from redirect sign-in
     getRedirectResult(auth)
       .then((result) => {
         if (result) {
@@ -67,11 +80,22 @@ export const initDriveAuth = (
       if (cachedAccessToken && !isExpired) {
         onAuthSuccess(user, cachedAccessToken);
       } else {
-        // User is still authenticated in Firebase Auth (e.g. Email/Password, Anonymous, or Drive token expired)
-        // Pass empty token for Drive, but keep user active for Firestore sync!
         onAuthSuccess(user, '');
       }
     } else {
+      // If store account exists in localStorage, don't drop auth
+      if (typeof window !== 'undefined') {
+        const storedStore = localStorage.getItem('cfg_store_auth_user');
+        if (storedStore) {
+          try {
+            const parsed = JSON.parse(storedStore);
+            if (parsed && parsed.uid) {
+              onAuthSuccess(parsed as any, '');
+              return;
+            }
+          } catch {}
+        }
+      }
       cachedAccessToken = null;
       localStorage.removeItem('cfg_drive_access_token');
       localStorage.removeItem('cfg_drive_access_token_time');
@@ -160,10 +184,16 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
  * Signs out from Firebase Auth and clears memory token cache
  */
 export const googleSignOut = async () => {
-  await auth.signOut();
+  try {
+    await auth.signOut();
+  } catch (e) {
+    console.warn("Sign out notice:", e);
+  }
   cachedAccessToken = null;
   localStorage.removeItem('cfg_drive_access_token');
   localStorage.removeItem('cfg_drive_access_token_time');
+  localStorage.removeItem('cfg_store_auth_user');
+  localStorage.removeItem('cfg_firestore_sync');
 };
 
 /**

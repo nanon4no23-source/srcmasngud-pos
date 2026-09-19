@@ -8,6 +8,7 @@ import {
   Camera, Copy, Check, Sparkles, Tag, ArrowRight, ArrowUp
 } from 'lucide-react';
 import CameraScanner from './CameraScanner';
+import { prepareSearchIndex, searchProductsByPrefix } from '../utils/searchHelper';
 
 // Helper to format clean display ID Member (e.g. MBR-001)
 export const formatDisplayMemberId = (p: Pelanggan): string => {
@@ -592,18 +593,24 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
     isMemberModalOpen
   ]);
 
-  // Filtered product catalog
-  const filteredProducts = useMemo(() => {
-    return barang.filter(p => {
-      // Must have stock > 0 to be available online
-      if (p.stok <= 0) return false;
+  // Pre-indexed search cache for online catalog
+  const searchIndex = useMemo(() => {
+    return prepareSearchIndex(barang.filter(p => p.stok > 0));
+  }, [barang]);
 
-      const q = searchQuery.toLowerCase().trim();
-      const matchSearch = !q || p.nama.toLowerCase().includes(q) || p.kode.toLowerCase().includes(q) || (p.kategori && p.kategori.toLowerCase().includes(q));
-      const matchCat = selectedCategory === 'Semua' || p.kategori === selectedCategory;
-      return matchSearch && matchCat;
-    });
-  }, [barang, searchQuery, selectedCategory]);
+  // Filtered product catalog prioritizing prefix of words
+  const filteredProducts = useMemo(() => {
+    let pool: ItemBarang[];
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) {
+      pool = barang.filter(p => p.stok > 0);
+    } else {
+      pool = searchProductsByPrefix(searchIndex, q, 100);
+    }
+
+    if (selectedCategory === 'Semua') return pool;
+    return pool.filter(p => p.kategori === selectedCategory);
+  }, [barang, searchIndex, searchQuery, selectedCategory]);
 
   // Handle Qty Changes
   const updateCartQty = (productId: string, delta: number, unitId?: string) => {

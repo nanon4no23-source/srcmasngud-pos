@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, memo } from 'react';
 import { Search, X, Camera, Smartphone, ChevronDown } from 'lucide-react';
 import { ItemBarang, Pelanggan } from '../types';
 import { matchBarcode, matchMemberBarcode } from '../utils/printHelper';
+import { prepareSearchIndex, searchProductsByPrefix } from '../utils/searchHelper';
 
 const CATEGORY_ICONS: Record<string, string> = {
   'Minuman': '🥤',
@@ -83,36 +84,15 @@ const KasirSearchInput: React.FC<KasirSearchInputProps> = memo(({
     return () => clearTimeout(timer);
   }, [inputText]);
 
-  // Pre-indexed search cache for high-speed item lookup without repeated toLowerCase calls
+  // Pre-indexed search cache for high-speed item lookup with word-tokenized structures
   const searchIndex = useMemo(() => {
-    return barang.map(item => ({
-      item,
-      searchStr: `${item.nama || ''} ${item.kode || ''} ${item.kategori || ''}`.toLowerCase()
-    }));
+    return prepareSearchIndex(barang);
   }, [barang]);
 
-  // Filtered items matching all tokens
+  // Filtered items prioritizing prefix of words (suku kata depan), excluding mid-word substrings when prefixes match
   const filteredItems = useMemo(() => {
     if (!debouncedQuery) return [];
-    const tokens = debouncedQuery.toLowerCase().split(/\s+/).filter(Boolean);
-    if (tokens.length === 0) return [];
-
-    const matches: ItemBarang[] = [];
-    for (let i = 0; i < searchIndex.length; i++) {
-      const entry = searchIndex[i];
-      let match = true;
-      for (let t = 0; t < tokens.length; t++) {
-        if (!entry.searchStr.includes(tokens[t])) {
-          match = false;
-          break;
-        }
-      }
-      if (match) {
-        matches.push(entry.item);
-        if (matches.length >= 60) break; // Limit array size for ultra fast memory handling
-      }
-    }
-    return matches;
+    return searchProductsByPrefix(searchIndex, debouncedQuery, 60);
   }, [searchIndex, debouncedQuery]);
 
   const handleSubmit = (e: React.FormEvent) => {

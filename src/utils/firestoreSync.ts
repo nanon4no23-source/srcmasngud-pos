@@ -437,3 +437,99 @@ export const syncSettingsToCloud = async (
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 };
+
+export interface StoreCloudUser {
+  uid: string;
+  email: string;
+  displayName: string;
+  isStoreAccount: boolean;
+  photoURL?: string;
+  isAnonymous?: boolean;
+}
+
+export const deriveStoreKey = (input: string): string => {
+  const clean = input.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
+  return `store_${clean}`;
+};
+
+/**
+ * Universal Store Account Login & Registration:
+ * 100% works across Android APK, WebView, and Web without domain restrictions or Google OAuth blocks.
+ * If account already exists -> checks password and logs in.
+ * If account does not exist -> creates the store account and connects automatically.
+ */
+export const loginOrRegisterStoreAccount = async (
+  emailOrId: string,
+  pass: string,
+  storeName?: string,
+  _explicitRegister?: boolean
+): Promise<StoreCloudUser> => {
+  const cleanInput = emailOrId.trim().toLowerCase();
+  if (!cleanInput) throw new Error("Mohon masukkan email atau ID Toko Anda.");
+  if (!pass || pass.trim().length < 4) throw new Error("Kata sandi minimal 4 karakter.");
+
+  const storeKey = deriveStoreKey(cleanInput);
+  const credRef = doc(db, 'users', storeKey, 'account', 'credentials');
+  const snap = await getDoc(credRef);
+
+  if (snap.exists()) {
+    const data = snap.data();
+    if (data.password && data.password !== pass.trim()) {
+      throw new Error("Kata sandi salah untuk akun toko ini. Mohon periksa kembali sandi Anda.");
+    }
+    // Update last login
+    await setDoc(credRef, { lastLogin: new Date().toISOString() }, { merge: true });
+    const user: StoreCloudUser = {
+      uid: storeKey,
+      email: data.email || cleanInput,
+      displayName: data.storeName || storeName || 'SRC MASNGUD',
+      isStoreAccount: true
+    };
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('cfg_store_auth_user', JSON.stringify(user));
+      localStorage.setItem('cfg_firestore_sync', 'true');
+    }
+    return user;
+  } else {
+    // Register new store account directly
+    const newStoreName = (storeName && storeName.trim()) ? storeName.trim() : 'SRC MASNGUD';
+    const payload = {
+      storeKey,
+      email: cleanInput,
+      storeName: newStoreName,
+      password: pass.trim(),
+      createdAt: new Date().toISOString(),
+      lastLogin: new Date().toISOString()
+    };
+    await setDoc(credRef, payload);
+    const user: StoreCloudUser = {
+      uid: storeKey,
+      email: cleanInput,
+      displayName: newStoreName,
+      isStoreAccount: true
+    };
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('cfg_store_auth_user', JSON.stringify(user));
+      localStorage.setItem('cfg_firestore_sync', 'true');
+    }
+    return user;
+  }
+};
+
+export const getStoredStoreAccount = (): StoreCloudUser | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem('cfg_store_auth_user');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
+export const logoutStoreAccount = () => {
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('cfg_store_auth_user');
+    localStorage.removeItem('cfg_firestore_sync');
+  }
+};
+

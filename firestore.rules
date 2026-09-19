@@ -1,0 +1,12 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Toko SRC MASNGUD Real-Time Multi-HP & Cloud Backup
+    match /stores/{storeId}/{document=**} {
+      allow read, write: if true;
+    }
+    match /users/{userId}/{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

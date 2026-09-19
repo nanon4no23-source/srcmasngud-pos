@@ -103,7 +103,10 @@ import {
   listenToRealtimeCloud,
   fetchCloudDatabase,
   syncSettingsToCloud,
-  syncDeletedIdsToCloud
+  syncDeletedIdsToCloud,
+  loginOrRegisterStoreAccount,
+  getStoredStoreAccount,
+  logoutStoreAccount
 } from './utils/firestoreSync';
 import { exportAndSaveFile, downloadRemoteFileBlob } from './utils/fileDownloader';
 import { BuildApkModal } from './components/BuildApkModal';
@@ -2636,8 +2639,10 @@ export default function App() {
 
   // Android hardware back handler is declared after all modal states below
 
-  // --- GOOGLE DRIVE CLOUD SYNC STATES ---
-  const [driveUser, setDriveUser] = useState<any>(null);
+  // --- GOOGLE DRIVE & CLOUD STORE SYNC STATES ---
+  const [driveUser, setDriveUser] = useState<any>(() => {
+    return getStoredStoreAccount();
+  });
   const [driveToken, setDriveToken] = useState<string | null>(null);
   const [driveLastSync, setDriveLastSync] = useState<string | null>(() => {
     return localStorage.getItem('cfg_drive_last_sync');
@@ -2649,6 +2654,7 @@ export default function App() {
   const [cloudAuthTab, setCloudAuthTab] = useState<'email' | 'google'>('email');
   const [authEmail, setAuthEmail] = useState<string>('');
   const [authPassword, setAuthPassword] = useState<string>('');
+  const [showAuthPassword, setShowAuthPassword] = useState<boolean>(false);
   const [authStoreName, setAuthStoreName] = useState<string>('SRC MASNGUD');
   const [isRegisterMode, setIsRegisterMode] = useState<boolean>(false);
   const [cloudDomainNotice, setCloudDomainNotice] = useState<string | null>(null);
@@ -3313,41 +3319,33 @@ export default function App() {
   };
 
   const handleEmailAuth = async (isRegister: boolean) => {
-    if (!authEmail.trim() || !authPassword.trim()) {
-      showToast("⚠️ Mohon isi email toko dan kata sandi.");
+    const emailInput = authEmail.trim();
+    const passInput = authPassword.trim();
+    if (!emailInput || !passInput) {
+      showToast("⚠️ Mohon isi email / ID toko dan kata sandi.");
       return;
     }
-    if (authPassword.length < 6) {
-      showToast("⚠️ Kata sandi minimal 6 karakter.");
+    if (passInput.length < 4) {
+      showToast("⚠️ Kata sandi minimal 4 karakter.");
       return;
     }
     try {
       setIsDriveLoading(true);
       setCloudDomainNotice(null);
-      let user: any;
-      if (isRegister) {
-        user = await emailSignUp(authEmail, authPassword, authStoreName || 'SRC MASNGUD');
-        showToast("🎉 Berhasil membuat Akun Toko Cloud!");
-      } else {
-        user = await emailSignIn(authEmail, authPassword);
-        showToast(`👋 Tersambung sebagai ${user.displayName || user.email}`);
-      }
+      const user = await loginOrRegisterStoreAccount(
+        emailInput,
+        passInput,
+        authStoreName || 'SRC MASNGUD',
+        isRegister
+      );
       setDriveUser(user);
       setDriveToken('');
       setIsFirestoreSync(true);
       localStorage.setItem('cfg_firestore_sync', 'true');
+      showToast(`🎉 Sukses! Tersambung ke Cloud Toko (${user.displayName || user.email})`);
     } catch (err: any) {
-      console.error("Email auth error:", err);
-      const code = err?.code || '';
-      if (code === 'auth/email-already-in-use') {
-        showToast("⚠️ Email sudah terdaftar. Silakan klik 'Masuk' atau gunakan email lain.");
-      } else if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
-        showToast("❌ Email atau kata sandi salah. Silakan periksa kembali.");
-      } else if (code === 'auth/invalid-email') {
-        showToast("⚠️ Format email tidak valid.");
-      } else {
-        showToast(`❌ Gagal masuk: ${err?.message || err}`);
-      }
+      console.error("Email/Store auth error:", err);
+      showToast(`❌ ${err?.message || 'Gagal masuk ke Cloud Toko'}`);
     } finally {
       setIsDriveLoading(false);
     }
@@ -3357,7 +3355,13 @@ export default function App() {
     try {
       setIsDriveLoading(true);
       setCloudDomainNotice(null);
-      const user = await anonymousSignIn(authStoreName || 'Kasir Tamu');
+      const randomCode = Math.random().toString(36).substring(2, 7);
+      const guestId = `kasir_tamu_${randomCode}@srcmasngud.local`;
+      const user = await loginOrRegisterStoreAccount(
+        guestId,
+        '123456',
+        authStoreName || 'Kasir Tamu SRC MASNGUD'
+      );
       setDriveUser(user);
       setDriveToken('');
       setIsFirestoreSync(true);
@@ -3426,10 +3430,13 @@ export default function App() {
   const handleLogoutDrive = async () => {
     try {
       setIsDriveLoading(true);
+      logoutStoreAccount();
       await googleSignOut();
       setDriveUser(null);
       setDriveToken(null);
-      showToast("👋 Terputus dari Akun Cloud.");
+      setIsFirestoreSync(false);
+      localStorage.removeItem('cfg_firestore_sync');
+      showToast("👋 Terputus dari Akun Cloud Toko.");
     } catch (err: any) {
       showToast(`❌ Gagal memutuskan sambungan: ${err?.message || err}`);
     } finally {
@@ -8585,6 +8592,21 @@ export default function App() {
         if (a.id === newlyAddedBarangId) return -1;
         if (b.id === newlyAddedBarangId) return 1;
       }
+
+      // Prioritize items whose name starts with search term (e.g. 'Yakult' when searching 'ya')
+      if (term) {
+        const aStarts = (a.nama || '').toLowerCase().startsWith(term);
+        const bStarts = (b.nama || '').toLowerCase().startsWith(term);
+        if (aStarts && !bStarts) return -1;
+        if (!aStarts && bStarts) return 1;
+
+        // Next prioritize items whose any word starts with search term
+        const aWordStarts = (a.nama || '').toLowerCase().split(/[\s\-_,./+&()]+/).some(w => w.startsWith(term));
+        const bWordStarts = (b.nama || '').toLowerCase().split(/[\s\-_,./+&()]+/).some(w => w.startsWith(term));
+        if (aWordStarts && !bWordStarts) return -1;
+        if (!aWordStarts && bWordStarts) return 1;
+      }
+
       let valA: any;
       let valB: any;
 
@@ -20601,49 +20623,56 @@ export default function App() {
                         <div className="text-[10px] font-medium text-slate-600">
                           {isRegisterMode 
                             ? 'Daftarkan akun Cloud Toko Anda untuk menyinkronkan data antar HP kasir secara otomatis.'
-                            : 'Masuk dengan email & kata sandi toko untuk mengaktifkan sinkronisasi otomatis multi-HP.'}
+                            : 'Masukkan email atau ID toko & kata sandi. Akun baru akan otomatis dibuat jika belum terdaftar.'}
                         </div>
 
                         <div className="space-y-2">
-                          {isRegisterMode && (
-                            <div>
-                              <label className="text-[9px] font-extrabold text-slate-600 uppercase block mb-0.5">
-                                Nama Toko / Kasir
-                              </label>
-                              <input
-                                type="text"
-                                value={authStoreName}
-                                onChange={(e) => setAuthStoreName(e.target.value)}
-                                placeholder="Contoh: SRC MASNGUD"
-                                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-medium focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
-                              />
-                            </div>
-                          )}
-
                           <div>
                             <label className="text-[9px] font-extrabold text-slate-600 uppercase block mb-0.5">
-                              Email Toko / Kasir
+                              Nama Toko
                             </label>
                             <input
-                              type="email"
-                              value={authEmail}
-                              onChange={(e) => setAuthEmail(e.target.value)}
-                              placeholder="contoh: kasir@srcmasngud.com"
+                              type="text"
+                              value={authStoreName}
+                              onChange={(e) => setAuthStoreName(e.target.value)}
+                              placeholder="Contoh: SRC MASNGUD"
                               className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-medium focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
                             />
                           </div>
 
                           <div>
                             <label className="text-[9px] font-extrabold text-slate-600 uppercase block mb-0.5">
-                              Kata Sandi (Minimal 6 karakter)
+                              Email atau ID Toko
                             </label>
                             <input
-                              type="password"
-                              value={authPassword}
-                              onChange={(e) => setAuthPassword(e.target.value)}
-                              placeholder="••••••••"
+                              type="text"
+                              value={authEmail}
+                              onChange={(e) => setAuthEmail(e.target.value)}
+                              placeholder="contoh: nanon4no23@gmail.com atau srcmasngud"
                               className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-medium focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
                             />
+                          </div>
+
+                          <div>
+                            <label className="text-[9px] font-extrabold text-slate-600 uppercase block mb-0.5">
+                              Kata Sandi Toko (Minimal 4 karakter)
+                            </label>
+                            <div className="relative">
+                              <input
+                                type={showAuthPassword ? "text" : "password"}
+                                value={authPassword}
+                                onChange={(e) => setAuthPassword(e.target.value)}
+                                placeholder="••••••••"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 pr-9 text-xs text-slate-800 font-medium focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setShowAuthPassword(!showAuthPassword)}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+                              >
+                                {showAuthPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                              </button>
+                            </div>
                           </div>
                         </div>
 
@@ -20654,22 +20683,18 @@ export default function App() {
                             className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5"
                           >
                             <Cloud className="w-3.5 h-3.5" />
-                            <span>{isRegisterMode ? 'Daftar Akun Cloud Toko' : 'Masuk ke Cloud Toko'}</span>
+                            <span>Hubungkan ke Cloud Toko (Multi-HP)</span>
                           </button>
 
                           <div className="flex items-center justify-between text-[9.5px]">
-                            <button
-                              type="button"
-                              onClick={() => setIsRegisterMode(!isRegisterMode)}
-                              className="text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer"
-                            >
-                              {isRegisterMode ? 'Sudah punya akun? Masuk di sini' : 'Belum punya akun? Buat Akun Baru'}
-                            </button>
+                            <span className="text-slate-500">
+                              🟢 100% Aktif di APK Android
+                            </span>
 
                             <button
                               type="button"
                               onClick={handleAnonymousAuth}
-                              className="text-slate-500 hover:text-slate-800 font-bold cursor-pointer"
+                              className="text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer"
                             >
                               ⚡ Masuk Cepat (Guest)
                             </button>
@@ -20677,7 +20702,7 @@ export default function App() {
                         </div>
 
                         <div className="bg-indigo-50/60 p-2 rounded-lg border border-indigo-100/80 text-[9px] text-indigo-900 leading-normal">
-                          💡 <strong>Tips Multi-HP:</strong> Masukkan email &amp; sandi yang sama di HP kasir lain agar stok, member, transaksi, dan pesanan online tersinkronkan otomatis!
+                          💡 <strong>Tips Multi-HP:</strong> Masukkan email &amp; sandi yang sama di HP kasir lain agar stok, member, transaksi, dan pesanan online tersinkronkan otomatis tanpa batasan domain!
                         </div>
                       </div>
                     ) : (

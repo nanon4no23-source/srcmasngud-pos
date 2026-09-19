@@ -4,7 +4,7 @@ import {
   ShoppingBag, CheckCircle2, Clock, Truck, Store, XCircle, 
   MessageCircle, Printer, Share2, AlertCircle, Eye, ChevronRight,
   Filter, Search, QrCode, Copy, Check, Edit3, Trash2, Plus, Minus, X, PackageX,
-  Image as ImageIcon, Upload, Sparkles, Power, Tag, ArrowUpRight
+  Image as ImageIcon, Upload, Sparkles, Power, Tag, ArrowUpRight, Link2, Globe, ExternalLink
 } from 'lucide-react';
 
 interface PesananOnlineManagerProps {
@@ -84,6 +84,8 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
   const [filterStatus, setFilterStatus] = useState<string>('Semua');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
+  const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
+  const [customLinkInput, setCustomLinkInput] = useState('');
   const [cancelReasonModal, setCancelReasonModal] = useState<{ id: string } | null>(null);
   const [cancelReason, setCancelReason] = useState('');
 
@@ -293,16 +295,52 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
     return { unitPrice: prod.jual, subtotal: Math.round(qty * prod.jual) };
   };
 
-  const copyOnlineStoreLink = () => {
+  const PUBLIC_ONLINE_STORE_URL = 'https://ais-pre-ygntom22qz77b7nows5adl-464365808003.asia-southeast1.run.app/?mode=pembeli';
+
+  const getPublicStoreUrl = () => {
+    if (config?.customDomainOnlineStore && config.customDomainOnlineStore.trim()) {
+      let custom = config.customDomainOnlineStore.trim();
+      if (!custom.startsWith('http://') && !custom.startsWith('https://')) {
+        custom = 'https://' + custom;
+      }
+      try {
+        const u = new URL(custom);
+        u.searchParams.set('mode', 'pembeli');
+        return u.toString();
+      } catch (e) {
+        return custom.includes('?') ? `${custom}&mode=pembeli` : `${custom}?mode=pembeli`;
+      }
+    }
+
     try {
+      const currentOrigin = window.location.origin;
+      // If running inside Android APK webview or local file/localhost, return official public URL
+      if (!currentOrigin || currentOrigin.includes('localhost') || currentOrigin.includes('127.0.0.1') || currentOrigin.startsWith('file://')) {
+        return PUBLIC_ONLINE_STORE_URL;
+      }
       const url = new URL(window.location.href);
       url.searchParams.set('mode', 'pembeli');
-      navigator.clipboard.writeText(url.toString());
+      return url.toString();
     } catch (e) {
-      navigator.clipboard.writeText(window.location.origin + '?mode=pembeli');
+      return PUBLIC_ONLINE_STORE_URL;
+    }
+  };
+
+  const copyOnlineStoreLink = () => {
+    const targetUrl = getPublicStoreUrl();
+    try {
+      navigator.clipboard.writeText(targetUrl);
+    } catch (e) {
+      // Fallback if clipboard API fails
+      const tempInput = document.createElement('input');
+      tempInput.value = targetUrl;
+      document.body.appendChild(tempInput);
+      tempInput.select();
+      document.execCommand('copy');
+      document.body.removeChild(tempInput);
     }
     setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
+    setTimeout(() => setCopiedLink(false), 2500);
   };
 
   return (
@@ -371,9 +409,23 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
                 ? 'bg-emerald-600 text-white border-emerald-600' 
                 : hologramMode ? 'bg-zinc-800 border-zinc-700 text-zinc-200' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
             }`}
+            title="Salin Link Toko Online Publik untuk Dibagikan ke Pelanggan"
           >
             {copiedLink ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
             <span>{copiedLink ? 'Link Tersalin!' : 'Salin Link Toko'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setCustomLinkInput(config?.customDomainOnlineStore || '');
+              setIsLinkModalOpen(true);
+            }}
+            className="px-3 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-200 border border-slate-200 dark:border-zinc-700 transition-all cursor-pointer flex items-center gap-1.5"
+            title="Lihat Link Lengkap & Barcode QR Code Toko"
+          >
+            <QrCode className="w-4 h-4 text-red-600" />
+            <span className="hidden sm:inline">Info &amp; QR Link</span>
           </button>
         </div>
       </div>
@@ -1736,6 +1788,131 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
               </div>
             </div>
 
+          </div>
+        </div>
+      )}
+      {/* MODAL INFO LINK TOKO ONLINE & QR CODE */}
+      {isLinkModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-zinc-900 rounded-3xl overflow-hidden max-w-lg w-full shadow-2xl border border-slate-100 dark:border-zinc-800 animate-in zoom-in-95 duration-200">
+            <div className="bg-gradient-to-r from-red-600 via-red-700 to-red-800 text-white p-5 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-white text-red-700 flex items-center justify-center font-black text-base shadow-md shrink-0">
+                  <Globe className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm">
+                    Link Toko Online Publik
+                  </h3>
+                  <p className="text-[11px] text-red-100">
+                    Akses Pembeli untuk Berbelanja Online dari Luar / Browser
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsLinkModalOpen(false)}
+                className="p-1.5 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-left">
+              {/* CURRENT ACTIVE PUBLIC LINK */}
+              <div className="bg-slate-50 dark:bg-zinc-800/60 p-3.5 rounded-2xl border border-slate-200 dark:border-zinc-700 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-500 dark:text-zinc-400">
+                    Link Toko Siap Bagikan:
+                  </span>
+                  <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300">
+                    Cloud Run Online
+                  </span>
+                </div>
+                <div className="p-2.5 bg-white dark:bg-zinc-900 rounded-xl border border-slate-200 dark:border-zinc-700 break-all font-mono text-xs text-red-700 dark:text-red-400 font-bold select-all">
+                  {getPublicStoreUrl()}
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={copyOnlineStoreLink}
+                    className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
+                  >
+                    {copiedLink ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    <span>{copiedLink ? 'Link Berhasil Disalin!' : 'Salin Link'}</span>
+                  </button>
+                  <a
+                    href={getPublicStoreUrl()}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-200 font-extrabold text-xs rounded-xl transition-colors cursor-pointer flex items-center gap-1"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    <span>Tes Buka</span>
+                  </a>
+                </div>
+              </div>
+
+              {/* QR CODE GENERATOR DISPLAY */}
+              <div className="p-4 bg-slate-50 dark:bg-zinc-800/60 rounded-2xl border border-slate-200 dark:border-zinc-700 text-center space-y-2.5">
+                <p className="text-xs font-black text-slate-700 dark:text-zinc-200">
+                  Scan QR Code untuk Membuka Toko di HP Pelanggan:
+                </p>
+                <div className="inline-block p-3 bg-white rounded-2xl shadow-sm border border-slate-200">
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(getPublicStoreUrl())}`}
+                    alt="QR Code Toko Online"
+                    className="w-36 h-36 mx-auto rounded-lg"
+                    loading="lazy"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                  Cetak atau tampilkan QR ini di kasir toko fisik agar pembeli bisa langsung scan dan simpan link toko.
+                </p>
+              </div>
+
+              {/* CUSTOM DOMAIN / URL OVERRIDE */}
+              <div className="space-y-1.5 pt-1">
+                <label className="block text-[11px] font-extrabold text-slate-700 dark:text-zinc-300">
+                  Kustomisasi Domain / URL Toko (Opsional):
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="https://toko-anda.com atau link cloud"
+                    value={customLinkInput}
+                    onChange={(e) => setCustomLinkInput(e.target.value)}
+                    className="flex-1 px-3 py-2 bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-mono text-slate-800 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-red-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onUpdateConfig) {
+                        onUpdateConfig('customDomainOnlineStore', customLinkInput.trim());
+                        alert('Pengaturan link toko berhasil diperbarui!');
+                      }
+                    }}
+                    className="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-extrabold text-xs rounded-xl transition-colors cursor-pointer"
+                  >
+                    Simpan
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-400">
+                  Kosongkan jika ingin menggunakan link publik bawaan Cloud Run.
+                </p>
+              </div>
+
+            </div>
+
+            <div className="p-4 bg-slate-50 dark:bg-zinc-800/40 border-t border-slate-100 dark:border-zinc-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsLinkModalOpen(false)}
+                className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-extrabold rounded-xl transition-colors cursor-pointer"
+              >
+                Tutup
+              </button>
+            </div>
           </div>
         </div>
       )}

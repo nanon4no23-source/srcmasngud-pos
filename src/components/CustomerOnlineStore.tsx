@@ -70,8 +70,6 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
   // New states for Member ID features
   const [isDigitalCardOpen, setIsDigitalCardOpen] = useState(false);
   const [isMemberCardScannerOpen, setIsMemberCardScannerOpen] = useState(false);
-  const [isLookupMemberModalOpen, setIsLookupMemberModalOpen] = useState(false);
-  const [lookupSearchText, setLookupSearchText] = useState('');
   const [copiedMemberId, setCopiedMemberId] = useState(false);
 
   // States for Online Store Promo Banner Carousel
@@ -278,22 +276,6 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
       return matchId || matchPhone || matchName;
     }).slice(0, 5);
   }, [memberInput, pelanggan]);
-
-  // Filtered members for Lookup Modal
-  const filteredLookupMembers = useMemo(() => {
-    if (!lookupSearchText.trim()) return pelanggan.slice(0, 30);
-    const q = lookupSearchText.trim().toLowerCase();
-    const cleanPhone = normalizePhone(q);
-
-    return pelanggan.filter(p => {
-      const displayId = formatDisplayMemberId(p).toLowerCase();
-      const pIdLow = p.id.toLowerCase();
-      const pPhoneNorm = normalizePhone(p.telepon);
-      const pNameLow = p.nama.toLowerCase();
-
-      return displayId.includes(q) || pIdLow.includes(q) || pNameLow.includes(q) || (cleanPhone && pPhoneNorm.includes(cleanPhone));
-    });
-  }, [lookupSearchText, pelanggan]);
 
   const handleMemberLoginSubmit = (e?: React.FormEvent, selectedMember?: Pelanggan) => {
     if (e) e.preventDefault();
@@ -557,7 +539,7 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
 
   // Handle Mobile / Browser Back Button (popstate) safely
   useEffect(() => {
-    const isAnyModalOpen = isCartOpen || isOrderStatusModalOpen || !!selectedPromoModal || isDigitalCardOpen || isMemberCardScannerOpen || isLookupMemberModalOpen || isMemberModalOpen;
+    const isAnyModalOpen = isCartOpen || isOrderStatusModalOpen || !!selectedPromoModal || isDigitalCardOpen || isMemberCardScannerOpen || isMemberModalOpen;
 
     if (isAnyModalOpen) {
       try {
@@ -572,7 +554,6 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
       if (selectedPromoModal) { setSelectedPromoModal(null); return; }
       if (isDigitalCardOpen) { setIsDigitalCardOpen(false); return; }
       if (isMemberCardScannerOpen) { setIsMemberCardScannerOpen(false); return; }
-      if (isLookupMemberModalOpen) { setIsLookupMemberModalOpen(false); return; }
       if (isMemberModalOpen) { setIsMemberModalOpen(false); return; }
 
       // 2. If scrolled down deep in products list -> scroll back up to top header
@@ -589,7 +570,6 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
     selectedPromoModal,
     isDigitalCardOpen,
     isMemberCardScannerOpen,
-    isLookupMemberModalOpen,
     isMemberModalOpen
   ]);
 
@@ -2048,7 +2028,7 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
                   Belanja Online Member
                 </h3>
                 <p className="text-xs text-slate-500 leading-relaxed mt-1">
-                  Silakan masuk dengan Nomor HP / ID Member terdaftar Anda atau buat akun member baru untuk mengumpulkan poin belanja.
+                  Scan barcode / QR kartu member fisik Anda menggunakan kamera untuk keamanan akun terjamin, atau buat akun member baru.
                 </p>
               </div>
             </div>
@@ -2124,109 +2104,55 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
               </div>
             )}
 
-            {/* TAB 1: LOGIN */}
+            {/* TAB 1: LOGIN (KAMERA SCAN BARCODE MEMBER UNTUK KEAMANAN) */}
             {memberModalTab === 'login' ? (
-              <form onSubmit={(e) => handleMemberLoginSubmit(e)} className="space-y-3">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[11px] font-extrabold text-slate-700">
-                      ID Member / No. HP / Nama Terdaftar <span className="text-red-500">*</span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setLookupSearchText('');
-                        setIsLookupMemberModalOpen(true);
-                      }}
-                      className="text-[10px] font-bold text-red-600 hover:text-red-700 hover:underline flex items-center gap-0.5 cursor-pointer"
-                    >
-                      <Search className="w-3 h-3" />
-                      <span>Cari ID Saya</span>
-                    </button>
+              <div className="space-y-4">
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-center space-y-3">
+                  <div className="w-14 h-14 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-xs">
+                    <QrCode className="w-8 h-8" />
+                  </div>
+                  <div>
+                    <h4 className="font-extrabold text-xs text-slate-800 uppercase tracking-wider">
+                      Verifikasi Scan Fisik / QR Kartu
+                    </h4>
+                    <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                      Untuk menjaga keamanan data dan poin belanja Anda, akses masuk member diwajibkan menggunakan pemindaian Barcode atau QR Code pada Kartu Member terdaftar.
+                    </p>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <div className="relative flex-1">
-                      <Key className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
-                      <input
-                        type="text"
-                        required
-                        placeholder="Contoh: MBR-001, 08123456789, atau Nama Anda"
-                        value={memberInput}
-                        onChange={(e) => {
-                          setMemberInput(e.target.value);
-                          if (memberLoginError) setMemberLoginError(null);
-                        }}
-                        className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"
-                      />
-                    </div>
-                    
-                    <button
-                      type="button"
-                      onClick={() => setIsMemberCardScannerOpen(true)}
-                      className="px-3 py-2.5 bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1 shrink-0 active:scale-95 shadow-2xs"
-                      title="Scan Barcode / QR Kartu Member Fisik"
-                    >
-                      <Camera className="w-4 h-4 text-red-600" />
-                      <span className="hidden sm:inline">Scan Kartu</span>
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMemberLoginError(null);
+                      setIsMemberCardScannerOpen(true);
+                    }}
+                    className="w-full py-3.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white rounded-xl font-extrabold text-xs shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98"
+                  >
+                    <Camera className="w-5 h-5 text-white animate-pulse" />
+                    <span>Nyalakan Kamera &amp; Scan Barcode Member</span>
+                  </button>
+                </div>
 
-                  <p className="text-[10px] text-slate-400 mt-1 italic">
-                    💡 Anda bisa mengetik Kode ID Member (MBR-xxx), Nomor HP, atau Nama lengkap terdaftar.
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2 text-left text-amber-900">
+                  <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-[11px] leading-relaxed">
+                    <strong>Keamanan Terjaga:</strong> Tidak ada yang dapat menyalahgunakan atau memasukkan nomor HP / ID Anda sembarangan tanpa memegang kartu fisik member asli.
                   </p>
                 </div>
 
-                {/* LIVE AUTO-SUGGESTIONS FROM STORE DATABASE */}
-                {matchingMembersList.length > 0 && (
-                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-2 space-y-1.5 shadow-sm animate-in fade-in duration-150">
-                    <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider px-1 block">
-                      💡 Pilih Akun Member Terdaftar ({matchingMembersList.length}):
-                    </span>
-                    {matchingMembersList.map(m => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => handleMemberLoginSubmit(undefined, m)}
-                        className="w-full p-2.5 bg-white hover:bg-red-50 border border-slate-200 hover:border-red-300 rounded-xl transition-all cursor-pointer flex items-center justify-between text-left group"
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <div className="p-2 bg-red-100 text-red-600 rounded-lg group-hover:bg-red-600 group-hover:text-white transition-colors shrink-0">
-                            <UserCheck className="w-4 h-4" />
-                          </div>
-                          <div className="truncate">
-                            <div className="flex items-center gap-2">
-                              <span className="font-extrabold text-xs text-slate-800 truncate">{m.nama}</span>
-                              <span className="text-[9.5px] font-black text-red-600 bg-red-50 px-1.5 py-0.5 rounded border border-red-200 shrink-0">
-                                {formatDisplayMemberId(m)}
-                              </span>
-                            </div>
-                            <span className="text-[10px] text-slate-500 font-mono block mt-0.5">
-                              📱 {m.telepon ? (m.telepon.length > 6 ? `${m.telepon.slice(0, 4)}****${m.telepon.slice(-4)}` : m.telepon) : '-'}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="text-right shrink-0 ml-2">
-                          <span className="text-xs font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                            ⭐ {m.poin || 0} Poin
-                          </span>
-                          <span className="text-[9px] text-red-600 font-bold block mt-0.5 group-hover:underline">
-                            Klik Masuk →
-                          </span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  className="w-full py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-extrabold text-xs shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98"
-                >
-                  <UserCheck className="w-4 h-4" />
-                  <span>Verifikasi &amp; Masuk Belanja</span>
-                </button>
-              </form>
+                <div className="text-center pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMemberModalTab('register');
+                      setMemberLoginError(null);
+                    }}
+                    className="text-xs font-bold text-slate-500 hover:text-red-600 transition-colors cursor-pointer"
+                  >
+                    Belum punya kartu member? <span className="text-red-600 font-extrabold underline">Daftar Akun Baru</span>
+                  </button>
+                </div>
+              </div>
             ) : (
               /* TAB 2: REGISTER NEW MEMBER */
               <form onSubmit={handleRegisterMemberSubmit} className="space-y-3">
@@ -2428,95 +2354,6 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
         </div>
       )}
 
-      {/* 3. LOOKUP MEMBER ID MODAL */}
-      {isLookupMemberModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[250] flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-md rounded-3xl p-5 shadow-2xl space-y-3 text-left relative overflow-hidden max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <div className="p-2 bg-red-100 text-red-600 rounded-xl">
-                  <Search className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="font-extrabold text-sm text-slate-800">
-                    Cari ID Member Terdaftar
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    Ketik nama atau No. HP Anda untuk mengetahui ID Member Anda
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsLookupMemberModalOpen(false)}
-                className="p-1.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* SEARCH BOX */}
-            <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
-              <input
-                type="text"
-                autoFocus
-                placeholder="Ketik Nama Anda atau No. HP..."
-                value={lookupSearchText}
-                onChange={(e) => setLookupSearchText(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"
-              />
-            </div>
-
-            {/* MEMBER LIST */}
-            <div className="overflow-y-auto flex-1 space-y-2 pr-1">
-              {filteredLookupMembers.length === 0 ? (
-                <div className="text-center py-8 text-slate-400 text-xs">
-                  Tidak menemukan data member dengan kata kunci "{lookupSearchText}".
-                </div>
-              ) : (
-                filteredLookupMembers.map(m => (
-                  <div
-                    key={m.id}
-                    className="p-3 bg-slate-50 hover:bg-red-50 border border-slate-200 hover:border-red-300 rounded-2xl transition-all flex items-center justify-between text-left gap-2"
-                  >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-extrabold text-xs text-slate-900">{m.nama}</span>
-                        <span className="text-[9.5px] font-black text-red-600 bg-red-50 px-1.5 py-0.5 rounded border border-red-200">
-                          {formatDisplayMemberId(m)}
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-slate-500 font-mono block mt-0.5">
-                        📱 {m.telepon ? (m.telepon.length > 6 ? `${m.telepon.slice(0, 4)}****${m.telepon.slice(-4)}` : m.telepon) : '-'}
-                      </span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsLookupMemberModalOpen(false);
-                        handleMemberLoginSubmit(undefined, m);
-                      }}
-                      className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-extrabold text-xs transition-all cursor-pointer shrink-0 shadow-2xs"
-                    >
-                      Pilih &amp; Masuk
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setIsLookupMemberModalOpen(false)}
-              className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-extrabold text-xs transition-colors cursor-pointer"
-            >
-              Tutup
-            </button>
-          </div>
-        </div>
-      )}
       {/* ZOOMED PHOTO PREVIEW MODAL */}
       {zoomedImage && (
         <div 

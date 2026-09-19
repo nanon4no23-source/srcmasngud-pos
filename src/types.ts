@@ -108,6 +108,7 @@ export interface ConfigStruk {
   ongkirDelivery?: number; // Delivery fee
   deskripsiTokoOnline?: string; // Short store greeting/promo description
   sembunyikanPortalPembeli?: boolean; // Toggle to hide customer online store portal in cashier app
+  customDomainOnlineStore?: string; // Custom public store link/domain (e.g. cloud run or personal domain)
   promoBanners?: PromoBanner[]; // Store online promo banner list
 }
 

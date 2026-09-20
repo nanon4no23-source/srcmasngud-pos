@@ -1738,30 +1738,71 @@ export default function App() {
   
   // Config state
   const [config, setConfig] = useState<ConfigStruk>(() => {
+    // Read any permanently deleted employee names first
+    let initialDeletedEmployees: string[] = [];
+    try {
+      const rawDel = localStorage.getItem('src_deleted_karyawan');
+      if (rawDel) {
+        const parsedDel = JSON.parse(rawDel);
+        if (Array.isArray(parsedDel)) initialDeletedEmployees.push(...parsedDel);
+      }
+      const rawIds = localStorage.getItem('src_deleted_ids');
+      if (rawIds) {
+        const parsedIds = JSON.parse(rawIds);
+        if (Array.isArray(parsedIds.karyawan)) initialDeletedEmployees.push(...parsedIds.karyawan);
+      }
+    } catch (e) {}
+
     const cachedConfig = localStorage.getItem('cfg_pos_struk');
     if (cachedConfig) {
       try { 
         const parsed = JSON.parse(cachedConfig);
         if (parsed && typeof parsed === 'object') {
-          const defaultKaryawan = ['Andi S.', 'Siti R.', 'Budi H.', 'MASNGUD'];
+          // If Andi S was omitted in saved config, ensure it's marked as deleted
+          if (Array.isArray(parsed.daftarKaryawan) && !parsed.daftarKaryawan.includes('Andi S.')) {
+            if (!initialDeletedEmployees.includes('Andi S.')) {
+              initialDeletedEmployees.push('Andi S.');
+              try {
+                localStorage.setItem('src_deleted_karyawan', JSON.stringify(initialDeletedEmployees));
+              } catch (e) {}
+            }
+          }
+
           let loadedDaftar = Array.isArray(parsed.daftarKaryawan) 
             ? parsed.daftarKaryawan 
-            : [parsed.karyawan1 || 'Andi S.', parsed.karyawan2 || 'Siti R.', parsed.karyawan3 || 'Budi H.'].filter(Boolean);
+            : [parsed.karyawan1, parsed.karyawan2, parsed.karyawan3].filter(Boolean);
           
-          if (!loadedDaftar.includes('MASNGUD')) {
+          // Filter out deleted employees
+          loadedDaftar = loadedDaftar.filter((k: string) => 
+            k && !initialDeletedEmployees.some(d => d.toLowerCase().trim() === k.toLowerCase().trim())
+          );
+
+          if (loadedDaftar.length === 0) {
+            const baseDefaults = ['Siti R.', 'Budi H.', 'MASNGUD'].filter(
+              k => !initialDeletedEmployees.some(d => d.toLowerCase().trim() === k.toLowerCase().trim())
+            );
+            loadedDaftar = baseDefaults.length > 0 ? baseDefaults : ['Kasir'];
+          }
+          
+          if (!loadedDaftar.includes('MASNGUD') && !initialDeletedEmployees.some(d => d.toLowerCase().trim() === 'masngud')) {
             loadedDaftar = [...loadedDaftar, 'MASNGUD'];
           }
           
           const savedLocalKasir = localStorage.getItem('src_kasir_aktif');
+          const isSavedKasirDeleted = savedLocalKasir 
+            ? initialDeletedEmployees.some(d => d.toLowerCase().trim() === savedLocalKasir.toLowerCase().trim()) 
+            : false;
+          const safeActiveKasir = (!isSavedKasirDeleted && savedLocalKasir) ? savedLocalKasir : (loadedDaftar[0] || '');
+
           return {
             namaToko: parsed.namaToko ? String(parsed.namaToko) : 'SRC MASNGUD',
             alamatToko: parsed.alamatToko ? String(parsed.alamatToko) : 'Toko SRC Utama - Dekat, Hemat, Bersahabat',
             footnoteToko: parsed.footnoteToko ? String(parsed.footnoteToko) : 'Dekat Hemat dan Bersahabat',
-            kasirAktif: savedLocalKasir ? String(savedLocalKasir) : '',
-            karyawan1: parsed.karyawan1 ? String(parsed.karyawan1) : 'Andi S.',
-            karyawan2: parsed.karyawan2 ? String(parsed.karyawan2) : 'Siti R.',
-            karyawan3: parsed.karyawan3 ? String(parsed.karyawan3) : 'Budi H.',
-            daftarKaryawan: loadedDaftar.length > 0 ? loadedDaftar : defaultKaryawan,
+            kasirAktif: safeActiveKasir,
+            karyawan1: loadedDaftar[0] || '',
+            karyawan2: loadedDaftar[1] || '',
+            karyawan3: loadedDaftar[2] || '',
+            daftarKaryawan: loadedDaftar,
             logoUseImage: parsed.logoUseImage !== undefined ? Boolean(parsed.logoUseImage) : true,
             logoImageUrl: parsed.logoImageUrl ? String(parsed.logoImageUrl).replace('.png', '.jpg') : (localStorage.getItem('cfg_custom_default_logo') || '/default_logo.jpg'),
             sembunyikanPortalPembeli: parsed.sembunyikanPortalPembeli !== undefined ? Boolean(parsed.sembunyikanPortalPembeli) : true,
@@ -1770,16 +1811,26 @@ export default function App() {
         }
       } catch (e) {}
     }
+
+    const defaultDaftar = ['Andi S.', 'Siti R.', 'Budi H.', 'MASNGUD'].filter(
+      k => !initialDeletedEmployees.some(d => d.toLowerCase().trim() === k.toLowerCase().trim())
+    );
+    const safeDefaultDaftar = defaultDaftar.length > 0 ? defaultDaftar : ['Kasir'];
     const savedLocalKasir = localStorage.getItem('src_kasir_aktif');
+    const isSavedKasirDeleted = savedLocalKasir 
+      ? initialDeletedEmployees.some(d => d.toLowerCase().trim() === savedLocalKasir.toLowerCase().trim()) 
+      : false;
+    const safeActiveKasir = (!isSavedKasirDeleted && savedLocalKasir) ? savedLocalKasir : (safeDefaultDaftar[0] || '');
+
     const defaultConfig = {
       namaToko: 'SRC MASNGUD',
       alamatToko: 'Toko SRC Utama - Dekat, Hemat, Bersahabat',
       footnoteToko: 'Dekat Hemat dan Bersahabat',
-      kasirAktif: savedLocalKasir ? String(savedLocalKasir) : '',
-      karyawan1: 'Andi S.',
-      karyawan2: 'Siti R.',
-      karyawan3: 'Budi H.',
-      daftarKaryawan: ['Andi S.', 'Siti R.', 'Budi H.', 'MASNGUD'],
+      kasirAktif: safeActiveKasir,
+      karyawan1: safeDefaultDaftar[0] || '',
+      karyawan2: safeDefaultDaftar[1] || '',
+      karyawan3: safeDefaultDaftar[2] || '',
+      daftarKaryawan: safeDefaultDaftar,
       logoUseImage: true,
       logoImageUrl: (localStorage.getItem('cfg_custom_default_logo') || '/default_logo.jpg'),
       sembunyikanPortalPembeli: true,
@@ -2667,16 +2718,56 @@ export default function App() {
   const [firestoreMergeMode, setFirestoreMergeMode] = useState<'auto' | 'manual'>(() => {
     return (localStorage.getItem('cfg_firestore_merge_mode') as 'auto' | 'manual') || 'auto';
   });
+  const [deletedKaryawan, setDeletedKaryawan] = useState<string[]>(() => {
+    const list: string[] = [];
+    try {
+      const raw = localStorage.getItem('src_deleted_karyawan');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) list.push(...parsed);
+      }
+      const rawIds = localStorage.getItem('src_deleted_ids');
+      if (rawIds) {
+        const parsedIds = JSON.parse(rawIds);
+        if (Array.isArray(parsedIds.karyawan)) list.push(...parsedIds.karyawan);
+      }
+    } catch (e) {}
+    try {
+      const cachedConfig = localStorage.getItem('cfg_pos_struk');
+      if (cachedConfig) {
+        const parsedCfg = JSON.parse(cachedConfig);
+        if (parsedCfg && Array.isArray(parsedCfg.daftarKaryawan)) {
+          if (!parsedCfg.daftarKaryawan.includes('Andi S.') && !list.includes('Andi S.')) {
+            list.push('Andi S.');
+          }
+        }
+      }
+    } catch (e) {}
+    return Array.from(new Set(list));
+  });
+
+  const deletedKaryawanRef = useRef(deletedKaryawan);
+  deletedKaryawanRef.current = deletedKaryawan;
+
   const [deletedIds, setDeletedIds] = useState<{
     barang: string[];
     pelanggan: string[];
     transaksi: string[];
+    karyawan?: string[];
   }>(() => {
     try {
       const raw = localStorage.getItem('src_deleted_ids');
-      if (raw) return JSON.parse(raw);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return {
+          barang: Array.isArray(parsed.barang) ? parsed.barang : [],
+          pelanggan: Array.isArray(parsed.pelanggan) ? parsed.pelanggan : [],
+          transaksi: Array.isArray(parsed.transaksi) ? parsed.transaksi : [],
+          karyawan: Array.isArray(parsed.karyawan) ? parsed.karyawan : []
+        };
+      }
     } catch (e) {}
-    return { barang: [], pelanggan: [], transaksi: [] };
+    return { barang: [], pelanggan: [], transaksi: [], karyawan: [] };
   });
   const [isInitialMergeDone, setIsInitialMergeDone] = useState<boolean>(false);
   const [showMergeModal, setShowMergeModal] = useState<boolean>(false);
@@ -2695,6 +2786,12 @@ export default function App() {
   minBelanjaRef.current = minBelanjaPerPoin;
   const nilaiPoinRef = useRef(nilaiRupiahPerPoin);
   nilaiPoinRef.current = nilaiRupiahPerPoin;
+  const barangRef = useRef(barang);
+  barangRef.current = barang;
+  const pelangganRef = useRef(pelanggan);
+  pelangganRef.current = pelanggan;
+  const transaksiRef = useRef(transaksi);
+  transaksiRef.current = transaksi;
 
   // Monitor Google Drive active Auth state on page load
   useEffect(() => {
@@ -2716,21 +2813,41 @@ export default function App() {
 
   // Safe initialization / conflict check before real-time sync is permitted to run
   useEffect(() => {
-    if (!driveUser || !isFirestoreSync || isInitialMergeDone) return;
+    if (!driveUser || !isFirestoreSync || isInitialMergeDone) {
+      setIsDriveLoading(false);
+      return;
+    }
 
     let active = true;
+    let timeoutId: any = null;
 
     const checkAndInitMerge = async () => {
       try {
         setIsDriveLoading(true);
+        // Timeout guard: if sync check takes more than 8 seconds, cancel loading state
+        timeoutId = setTimeout(() => {
+          if (active) {
+            setIsDriveLoading(false);
+          }
+        }, 8000);
+
         const cloudData = await fetchCloudDatabase(driveUser.uid);
+        if (timeoutId) clearTimeout(timeoutId);
         
-        if (!active) return;
+        if (!active) {
+          setIsDriveLoading(false);
+          return;
+        }
+
+        const currentBarang = barangRef.current;
+        const currentPelanggan = pelangganRef.current;
+        const currentTransaksi = transaksiRef.current;
+        const currentConfig = configRef.current;
         
         if (!cloudData || (cloudData.barang.length === 0 && cloudData.pelanggan.length === 0 && cloudData.transaksi.length === 0)) {
           // Cloud is empty, safely populate it with local phone master data
-          await initializeCloudDatabase(driveUser.uid, { barang, pelanggan, transaksi });
-          await syncSettingsToCloud(driveUser.uid, { config, minBelanja: minBelanjaPerPoin, nilaiPoin: nilaiRupiahPerPoin });
+          await initializeCloudDatabase(driveUser.uid, { barang: currentBarang, pelanggan: currentPelanggan, transaksi: currentTransaksi });
+          await syncSettingsToCloud(driveUser.uid, { config: currentConfig, minBelanja: minBelanjaRef.current, nilaiPoin: nilaiPoinRef.current });
           if (active) {
             setIsInitialMergeDone(true);
             showToast("☁️ Database awan diinisialisasi dengan data HP ini.");
@@ -2738,9 +2855,9 @@ export default function App() {
         } else {
           // Compare cloud data against current local state
           const hasDiff = isDatabaseDifferent(
-            barang, cloudData.barang,
-            pelanggan, cloudData.pelanggan,
-            transaksi, cloudData.transaksi
+            currentBarang, cloudData.barang,
+            currentPelanggan, cloudData.pelanggan,
+            currentTransaksi, cloudData.transaksi
           );
           
           if (active) {
@@ -2753,23 +2870,40 @@ export default function App() {
                   const combinedDeleted = {
                     barang: Array.from(new Set([...deletedIds.barang, ...(cloudDel?.barang || [])])),
                     pelanggan: Array.from(new Set([...deletedIds.pelanggan, ...(cloudDel?.pelanggan || [])])),
-                    transaksi: Array.from(new Set([...deletedIds.transaksi, ...(cloudDel?.transaksi || [])]))
+                    transaksi: Array.from(new Set([...deletedIds.transaksi, ...(cloudDel?.transaksi || [])])),
+                    karyawan: Array.from(new Set([...(deletedIds.karyawan || []), ...(cloudDel?.karyawan || []), ...deletedKaryawanRef.current]))
                   };
 
                   await syncDeletedIdsToCloud(driveUser.uid, combinedDeleted);
                   setDeletedIds(combinedDeleted);
                   localStorage.setItem('src_deleted_ids', JSON.stringify(combinedDeleted));
+                  setDeletedKaryawan(combinedDeleted.karyawan);
+                  localStorage.setItem('src_deleted_karyawan', JSON.stringify(combinedDeleted.karyawan));
 
                   const merged = performSmartMerge(
-                    barang, cloudB,
-                    pelanggan, cloudP,
-                    transaksi, cloudT,
+                    currentBarang, cloudB,
+                    currentPelanggan, cloudP,
+                    currentTransaksi, cloudT,
                     'highest_stock',
                     combinedDeleted
                   );
                   
                   await initializeCloudDatabase(driveUser.uid, merged);
-                  await syncSettingsToCloud(driveUser.uid, { config, minBelanja: minBelanjaPerPoin, nilaiPoin: nilaiRupiahPerPoin });
+
+                  // Sanitize config before saving/pushing
+                  const activeDelKaryawan = combinedDeleted.karyawan;
+                  const safeDaftar = (currentConfig.daftarKaryawan || []).filter(
+                    (k: string) => k && !activeDelKaryawan.some(d => d.toLowerCase().trim() === k.toLowerCase().trim())
+                  );
+                  const sanitizedConfig = {
+                    ...currentConfig,
+                    daftarKaryawan: safeDaftar.length > 0 ? safeDaftar : ['Kasir'],
+                    karyawan1: safeDaftar[0] || '',
+                    karyawan2: safeDaftar[1] || '',
+                    karyawan3: safeDaftar[2] || ''
+                  };
+
+                  await syncSettingsToCloud(driveUser.uid, { config: sanitizedConfig, minBelanja: minBelanjaRef.current, nilaiPoin: nilaiPoinRef.current });
                   
                   setBarang(merged.barang);
                   localStorage.setItem('src_barang', JSON.stringify(merged.barang));
@@ -2790,60 +2924,45 @@ export default function App() {
                 setShowMergeModal(true);
               }
             } else {
-              // Identical database, ready for real-time operation
-              const defaultName = 'SRC MASNGUD';
-              const defaultAlamat = 'Toko SRC Utama - Dekat, Hemat, Bersahabat';
-              const defaultFootnote = 'Dekat Hemat dan Bersahabat';
-
-              const isLocalCustomized = config && (
-                config.namaToko !== defaultName ||
-                config.alamatToko !== defaultAlamat ||
-                config.footnoteToko !== defaultFootnote ||
-                (config.daftarKaryawan && config.daftarKaryawan.length !== 3) ||
-                (config.daftarKaryawan && config.daftarKaryawan[0] !== 'Andi S.')
-              );
-
+              // Identical master data, sync settings if available
               const cloudSettings = cloudData.settings;
-              const isCloudCustomized = cloudSettings && cloudSettings.config && (
-                cloudSettings.config.namaToko !== defaultName ||
-                cloudSettings.config.alamatToko !== defaultAlamat ||
-                cloudSettings.config.footnoteToko !== defaultFootnote ||
-                (cloudSettings.config.daftarKaryawan && cloudSettings.config.daftarKaryawan.length !== 3) ||
-                (cloudSettings.config.daftarKaryawan && cloudSettings.config.daftarKaryawan[0] !== 'Andi S.')
-              );
+              if (cloudSettings && cloudSettings.config) {
+                const activeDelKaryawan = deletedKaryawanRef.current || [];
+                const rawCloudDaftar = Array.isArray(cloudSettings.config.daftarKaryawan)
+                  ? cloudSettings.config.daftarKaryawan
+                  : (currentConfig.daftarKaryawan || []);
+                const safeCloudDaftar = rawCloudDaftar.filter(
+                  (k: string) => k && !activeDelKaryawan.some(d => d.toLowerCase().trim() === k.toLowerCase().trim())
+                );
 
-              if (cloudSettings) {
-                if (isCloudCustomized && !isLocalCustomized) {
-                  if (cloudSettings.config) {
-                    setConfig(cloudSettings.config);
-                    localStorage.setItem('cfg_pos_struk', JSON.stringify(cloudSettings.config));
-                  }
-                  if (typeof cloudSettings.minBelanja === 'number') {
-                    setMinBelanjaPerPoin(cloudSettings.minBelanja);
-                    localStorage.setItem('cfg_min_belanja', String(cloudSettings.minBelanja));
-                  }
-                  if (typeof cloudSettings.nilaiPoin === 'number') {
-                    setNilaiRupiahPerPoin(cloudSettings.nilaiPoin);
-                    localStorage.setItem('cfg_nilai_poin', String(cloudSettings.nilaiPoin));
-                  }
-                } else if (isLocalCustomized && !isCloudCustomized) {
-                  await syncSettingsToCloud(driveUser.uid, { config, minBelanja: minBelanjaPerPoin, nilaiPoin: nilaiRupiahPerPoin }).catch(e => console.warn("Background auto sync settings failed:", e));
-                } else {
-                  if (cloudSettings.config) {
-                    setConfig(cloudSettings.config);
-                    localStorage.setItem('cfg_pos_struk', JSON.stringify(cloudSettings.config));
-                  }
-                  if (typeof cloudSettings.minBelanja === 'number') {
-                    setMinBelanjaPerPoin(cloudSettings.minBelanja);
-                    localStorage.setItem('cfg_min_belanja', String(cloudSettings.minBelanja));
-                  }
-                  if (typeof cloudSettings.nilaiPoin === 'number') {
-                    setNilaiRupiahPerPoin(cloudSettings.nilaiPoin);
-                    localStorage.setItem('cfg_nilai_poin', String(cloudSettings.nilaiPoin));
-                  }
+                const localKasir = localStorage.getItem('src_kasir_aktif') || currentConfig.kasirAktif;
+                const isLocalKasirDel = localKasir ? activeDelKaryawan.some(d => d.toLowerCase().trim() === localKasir.toLowerCase().trim()) : false;
+                const isCloudKasirDel = cloudSettings.config.kasirAktif ? activeDelKaryawan.some(d => d.toLowerCase().trim() === cloudSettings.config.kasirAktif.toLowerCase().trim()) : false;
+                const safeKasir = (!isLocalKasirDel && localKasir) ? localKasir : (!isCloudKasirDel && cloudSettings.config.kasirAktif ? cloudSettings.config.kasirAktif : (safeCloudDaftar[0] || ''));
+
+                const mergedConfig = {
+                  ...cloudSettings.config,
+                  daftarKaryawan: safeCloudDaftar.length > 0 ? safeCloudDaftar : ['Kasir'],
+                  kasirAktif: safeKasir,
+                  karyawan1: safeCloudDaftar[0] || '',
+                  karyawan2: safeCloudDaftar[1] || '',
+                  karyawan3: safeCloudDaftar[2] || ''
+                };
+                setConfig(mergedConfig);
+                localStorage.setItem('cfg_pos_struk', JSON.stringify(mergedConfig));
+
+                if (typeof cloudSettings.minBelanja === 'number') {
+                  setMinBelanjaPerPoin(cloudSettings.minBelanja);
+                  localStorage.setItem('cfg_min_belanja', String(cloudSettings.minBelanja));
                 }
+                if (typeof cloudSettings.nilaiPoin === 'number') {
+                  setNilaiRupiahPerPoin(cloudSettings.nilaiPoin);
+                  localStorage.setItem('cfg_nilai_poin', String(cloudSettings.nilaiPoin));
+                }
+                // Push back cleaned config to cloud so cloud never holds deleted cashier
+                await syncSettingsToCloud(driveUser.uid, { config: mergedConfig, minBelanja: minBelanjaRef.current, nilaiPoin: nilaiPoinRef.current }).catch(e => console.warn(e));
               } else {
-                await syncSettingsToCloud(driveUser.uid, { config, minBelanja: minBelanjaPerPoin, nilaiPoin: nilaiRupiahPerPoin }).catch(e => console.warn("Background init settings failed:", e));
+                await syncSettingsToCloud(driveUser.uid, { config: currentConfig, minBelanja: minBelanjaRef.current, nilaiPoin: nilaiPoinRef.current }).catch(e => console.warn(e));
               }
               setIsInitialMergeDone(true);
             }
@@ -2854,9 +2973,8 @@ export default function App() {
           showToast(`❌ Gagal menyelaraskan database awan: ${err?.message || err}`);
         }
       } finally {
-        if (active) {
-          setIsDriveLoading(false);
-        }
+        if (timeoutId) clearTimeout(timeoutId);
+        setIsDriveLoading(false);
       }
     };
 
@@ -2864,9 +2982,10 @@ export default function App() {
 
     return () => {
       active = false;
+      if (timeoutId) clearTimeout(timeoutId);
       setIsDriveLoading(false);
     };
-  }, [driveUser, isFirestoreSync, isInitialMergeDone, barang, pelanggan, transaksi]);
+  }, [driveUser?.uid, isFirestoreSync, isInitialMergeDone]);
 
   // Monitor real-time Firestore database subscription
   useEffect(() => {
@@ -2956,7 +3075,8 @@ export default function App() {
               const combinedDeleted = {
                 barang: Array.from(new Set([...prev.barang, ...(cloudDel.barang || [])])),
                 pelanggan: Array.from(new Set([...prev.pelanggan, ...(cloudDel.pelanggan || [])])),
-                transaksi: Array.from(new Set([...prev.transaksi, ...(cloudDel.transaksi || [])]))
+                transaksi: Array.from(new Set([...prev.transaksi, ...(cloudDel.transaksi || [])])),
+                karyawan: Array.from(new Set([...(prev.karyawan || []), ...(cloudDel.karyawan || []), ...deletedKaryawanRef.current]))
               };
 
               setBarang(currentBarang => {
@@ -2986,6 +3106,33 @@ export default function App() {
                 return currentTransaksi;
               });
 
+              if (Array.isArray(cloudDel.karyawan) && cloudDel.karyawan.length > 0) {
+                setDeletedKaryawan(combinedDeleted.karyawan);
+                localStorage.setItem('src_deleted_karyawan', JSON.stringify(combinedDeleted.karyawan));
+
+                // Clean current config if it contains any deleted employee
+                if (configRef.current && Array.isArray(configRef.current.daftarKaryawan)) {
+                  const cleanedList = configRef.current.daftarKaryawan.filter(
+                    name => !combinedDeleted.karyawan.some(d => d.toLowerCase().trim() === name.toLowerCase().trim())
+                  );
+                  if (cleanedList.length !== configRef.current.daftarKaryawan.length) {
+                    const isKasirDel = configRef.current.kasirAktif
+                      ? combinedDeleted.karyawan.some(d => d.toLowerCase().trim() === configRef.current.kasirAktif!.toLowerCase().trim())
+                      : false;
+                    const cleanedConfig = {
+                      ...configRef.current,
+                      daftarKaryawan: cleanedList.length > 0 ? cleanedList : ['Kasir'],
+                      kasirAktif: isKasirDel ? (cleanedList[0] || '') : configRef.current.kasirAktif,
+                      karyawan1: cleanedList[0] || '',
+                      karyawan2: cleanedList[1] || '',
+                      karyawan3: cleanedList[2] || ''
+                    };
+                    setConfig(cleanedConfig);
+                    localStorage.setItem('cfg_pos_struk', JSON.stringify(cleanedConfig));
+                  }
+                }
+              }
+
               localStorage.setItem('src_deleted_ids', JSON.stringify(combinedDeleted));
               return combinedDeleted;
             });
@@ -2993,38 +3140,33 @@ export default function App() {
         },
         onSettings: (settings) => {
           if (settings) {
-            const defaultName = 'SRC MASNGUD';
-            const defaultAlamat = 'Toko SRC Utama - Dekat, Hemat, Bersahabat';
-            const defaultFootnote = 'Dekat Hemat dan Bersahabat';
-
-            const isLocalCustomized = configRef.current && (
-              configRef.current.namaToko !== defaultName ||
-              configRef.current.alamatToko !== defaultAlamat ||
-              configRef.current.footnoteToko !== defaultFootnote ||
-              (configRef.current.daftarKaryawan && configRef.current.daftarKaryawan.length !== 3) ||
-              (configRef.current.daftarKaryawan && configRef.current.daftarKaryawan[0] !== 'Andi S.')
-            );
-
-            const isCloudCustomized = settings.config && (
-              settings.config.namaToko !== defaultName ||
-              settings.config.alamatToko !== defaultAlamat ||
-              settings.config.footnoteToko !== defaultFootnote ||
-              (settings.config.daftarKaryawan && settings.config.daftarKaryawan.length !== 3) ||
-              (settings.config.daftarKaryawan && settings.config.daftarKaryawan[0] !== 'Andi S.')
-            );
-
             if (settings.config) {
+              const activeDelKaryawan = deletedKaryawanRef.current || [];
+              const rawCloudDaftar = Array.isArray(settings.config.daftarKaryawan)
+                ? settings.config.daftarKaryawan
+                : (configRef.current?.daftarKaryawan || []);
+              const safeCloudDaftar = rawCloudDaftar.filter(
+                (k: string) => k && !activeDelKaryawan.some(d => d.toLowerCase().trim() === k.toLowerCase().trim())
+              );
+
               const localKasir = localStorage.getItem('src_kasir_aktif') || configRef.current?.kasirAktif;
+              const isLocalKasirDel = localKasir ? activeDelKaryawan.some(d => d.toLowerCase().trim() === localKasir.toLowerCase().trim()) : false;
+              const isCloudKasirDel = settings.config.kasirAktif ? activeDelKaryawan.some(d => d.toLowerCase().trim() === settings.config.kasirAktif.toLowerCase().trim()) : false;
+              const safeKasir = (!isLocalKasirDel && localKasir) ? localKasir : (!isCloudKasirDel && settings.config.kasirAktif ? settings.config.kasirAktif : (safeCloudDaftar[0] || ''));
+
               const mergedConfig = {
                 ...settings.config,
-                kasirAktif: localKasir || settings.config.kasirAktif || 'Andi S.'
+                daftarKaryawan: safeCloudDaftar.length > 0 ? safeCloudDaftar : ['Kasir'],
+                kasirAktif: safeKasir,
+                karyawan1: safeCloudDaftar[0] || '',
+                karyawan2: safeCloudDaftar[1] || '',
+                karyawan3: safeCloudDaftar[2] || ''
               };
+
               const isDiff = JSON.stringify(mergedConfig) !== JSON.stringify(configRef.current);
               if (isDiff) {
-                if (isCloudCustomized || !isLocalCustomized) {
-                  setConfig(mergedConfig);
-                  localStorage.setItem('cfg_pos_struk', JSON.stringify(mergedConfig));
-                }
+                setConfig(mergedConfig);
+                localStorage.setItem('cfg_pos_struk', JSON.stringify(mergedConfig));
               }
             }
             if (typeof settings.minBelanja === 'number' && settings.minBelanja !== minBelanjaRef.current) {
@@ -3044,7 +3186,7 @@ export default function App() {
     } catch (e) {
       console.error("Failed to establish real-time Firestore listeners:", e);
     }
-  }, [driveUser, isFirestoreSync, isInitialMergeDone]);
+  }, [driveUser?.uid, isFirestoreSync, isInitialMergeDone]);
 
   const triggerCloudAutoSync = async (
     currentBarang: ItemBarang[],
@@ -3581,18 +3723,36 @@ export default function App() {
       setIsDriveLoading(true);
 
       if (mergeType === 'overwrite_cloud') {
-        // Just upload current local data to cloud
+        // Sanitize config before pushing
+        const activeDelKaryawan = deletedKaryawanRef.current || [];
+        const safeDaftar = (config.daftarKaryawan || []).filter(
+          (k: string) => k && !activeDelKaryawan.some(d => d.toLowerCase().trim() === k.toLowerCase().trim())
+        );
+        const sanitizedConfig = {
+          ...config,
+          daftarKaryawan: safeDaftar.length > 0 ? safeDaftar : ['Kasir'],
+          karyawan1: safeDaftar[0] || '',
+          karyawan2: safeDaftar[1] || '',
+          karyawan3: safeDaftar[2] || ''
+        };
         await initializeCloudDatabase(driveUser.uid, { barang, pelanggan, transaksi });
-        await syncSettingsToCloud(driveUser.uid, { config, minBelanja: minBelanjaPerPoin, nilaiPoin: nilaiRupiahPerPoin });
+        await syncSettingsToCloud(driveUser.uid, { config: sanitizedConfig, minBelanja: minBelanjaPerPoin, nilaiPoin: nilaiRupiahPerPoin });
         await syncDeletedIdsToCloud(driveUser.uid, deletedIds);
         showToast("☁️ Berhasil mengunggah data lokal Anda ke awan!");
       } else if (mergeType === 'overwrite_local') {
         // Just replace local data with cloud data
         const { barang: cloudB, pelanggan: cloudP, transaksi: cloudT, deletedIds: cloudDel, settings: cloudSettings } = pendingCloudData as any;
         
-        const nextDel = cloudDel || { barang: [], pelanggan: [], transaksi: [] };
-        setDeletedIds(nextDel);
-        localStorage.setItem('src_deleted_ids', JSON.stringify(nextDel));
+        const combinedDel = {
+          barang: Array.isArray(cloudDel?.barang) ? cloudDel.barang : [],
+          pelanggan: Array.isArray(cloudDel?.pelanggan) ? cloudDel.pelanggan : [],
+          transaksi: Array.isArray(cloudDel?.transaksi) ? cloudDel.transaksi : [],
+          karyawan: Array.from(new Set([...(cloudDel?.karyawan || []), ...deletedKaryawanRef.current]))
+        };
+        setDeletedIds(combinedDel);
+        localStorage.setItem('src_deleted_ids', JSON.stringify(combinedDel));
+        setDeletedKaryawan(combinedDel.karyawan);
+        localStorage.setItem('src_deleted_karyawan', JSON.stringify(combinedDel.karyawan));
 
         setBarang(cloudB);
         localStorage.setItem('src_barang', JSON.stringify(cloudB));
@@ -3603,8 +3763,18 @@ export default function App() {
 
         if (cloudSettings) {
           if (cloudSettings.config) {
-            setConfig(cloudSettings.config);
-            localStorage.setItem('cfg_pos_struk', JSON.stringify(cloudSettings.config));
+            const activeDel = combinedDel.karyawan;
+            const rawList = Array.isArray(cloudSettings.config.daftarKaryawan) ? cloudSettings.config.daftarKaryawan : [];
+            const safeList = rawList.filter((k: string) => k && !activeDel.some(d => d.toLowerCase().trim() === k.toLowerCase().trim()));
+            const mergedCfg = {
+              ...cloudSettings.config,
+              daftarKaryawan: safeList.length > 0 ? safeList : ['Kasir'],
+              karyawan1: safeList[0] || '',
+              karyawan2: safeList[1] || '',
+              karyawan3: safeList[2] || ''
+            };
+            setConfig(mergedCfg);
+            localStorage.setItem('cfg_pos_struk', JSON.stringify(mergedCfg));
           }
           if (typeof cloudSettings.minBelanja === 'number') {
             setMinBelanjaPerPoin(cloudSettings.minBelanja);
@@ -3623,12 +3793,15 @@ export default function App() {
         const combinedDeleted = {
           barang: Array.from(new Set([...deletedIds.barang, ...(cloudDel?.barang || [])])),
           pelanggan: Array.from(new Set([...deletedIds.pelanggan, ...(cloudDel?.pelanggan || [])])),
-          transaksi: Array.from(new Set([...deletedIds.transaksi, ...(cloudDel?.transaksi || [])]))
+          transaksi: Array.from(new Set([...deletedIds.transaksi, ...(cloudDel?.transaksi || [])])),
+          karyawan: Array.from(new Set([...(deletedIds.karyawan || []), ...(cloudDel?.karyawan || []), ...deletedKaryawanRef.current]))
         };
 
         await syncDeletedIdsToCloud(driveUser.uid, combinedDeleted);
         setDeletedIds(combinedDeleted);
         localStorage.setItem('src_deleted_ids', JSON.stringify(combinedDeleted));
+        setDeletedKaryawan(combinedDeleted.karyawan);
+        localStorage.setItem('src_deleted_karyawan', JSON.stringify(combinedDeleted.karyawan));
 
         const merged = performSmartMerge(
           barang, cloudB,
@@ -3638,9 +3811,22 @@ export default function App() {
           combinedDeleted
         );
 
+        // Sanitize config
+        const activeDel = combinedDeleted.karyawan;
+        const safeDaftar = (config.daftarKaryawan || []).filter(
+          (k: string) => k && !activeDel.some(d => d.toLowerCase().trim() === k.toLowerCase().trim())
+        );
+        const sanitizedConfig = {
+          ...config,
+          daftarKaryawan: safeDaftar.length > 0 ? safeDaftar : ['Kasir'],
+          karyawan1: safeDaftar[0] || '',
+          karyawan2: safeDaftar[1] || '',
+          karyawan3: safeDaftar[2] || ''
+        };
+
         // Upload merged dataset to cloud & apply locally
         await initializeCloudDatabase(driveUser.uid, merged);
-        await syncSettingsToCloud(driveUser.uid, { config, minBelanja: minBelanjaPerPoin, nilaiPoin: nilaiRupiahPerPoin });
+        await syncSettingsToCloud(driveUser.uid, { config: sanitizedConfig, minBelanja: minBelanjaPerPoin, nilaiPoin: nilaiRupiahPerPoin });
 
         setBarang(merged.barang);
         localStorage.setItem('src_barang', JSON.stringify(merged.barang));
@@ -3666,6 +3852,9 @@ export default function App() {
     setIsFirestoreSync(checked);
     localStorage.setItem('cfg_firestore_sync', String(checked));
     setIsInitialMergeDone(false);
+    setIsDriveLoading(false);
+    setShowMergeModal(false);
+    setPendingCloudData(null);
     
     if (checked) {
       showToast("🔥 Sinkronisasi Rinci Real-Time Diaktifkan!");
@@ -6246,8 +6435,10 @@ export default function App() {
     // Check if there is an active shift running
     const activeShift = shiftLogs.find(log => log.status === 'aktif');
     if (!activeShift) {
+      const fallbackKasir = (config.daftarKaryawan || []).find(k => !deletedKaryawan.includes(k)) || 'Kasir';
+      const currentKasir = (config.kasirAktif && !deletedKaryawan.includes(config.kasirAktif)) ? config.kasirAktif : fallbackKasir;
       const proceedWithoutShift = await showCustomConfirm(
-        `⚠️ PERINGATAN SHIFT TIDAK AKTIF!\n\nToko saat ini belum memulai shift kasir yang aktif untuk karyawan yang bertugas.\n\nUntuk menjaga keakuratan pembukuan, laporan keuangan harian, dan audit shift, Anda sangat disarankan untuk mengaktifkan Shift baru terlebih dahulu di Menu Utama.\n\nApakah Anda yakin ingin tetap memproses transaksi ini tanpa mendaftarkannya pada shift aktif? (Kasir akan dicatat sebagai "${config.kasirAktif || 'Andi S.'} (Tanpa Shift)")`,
+        `⚠️ PERINGATAN SHIFT TIDAK AKTIF!\n\nToko saat ini belum memulai shift kasir yang aktif untuk karyawan yang bertugas.\n\nUntuk menjaga keakuratan pembukuan, laporan keuangan harian, dan audit shift, Anda sangat disarankan untuk mengaktifkan Shift baru terlebih dahulu di Menu Utama.\n\nApakah Anda yakin ingin tetap memproses transaksi ini tanpa mendaftarkannya pada shift aktif? (Kasir akan dicatat sebagai "${currentKasir} (Tanpa Shift)")`,
         "VALIDASI SHIFT KASIR"
       );
       if (!proceedWithoutShift) {
@@ -6369,7 +6560,11 @@ export default function App() {
       pelunasanHutang: selectedDebtsAmt > 0 ? selectedDebtsAmt : undefined,
       rincianHutangLunas: selectedDebtsAmt > 0 ? selectedDebtsInKasir : undefined,
       metodePembayaran: metodePembayaran,
-      kasir: activeShift ? (config.kasirAktif || 'Andi S.') : `${config.kasirAktif || 'Andi S.'} (Tanpa Shift)`,
+      kasir: (() => {
+        const fallbackKasirName = (config.daftarKaryawan || []).find(k => !deletedKaryawan.includes(k)) || 'Kasir';
+        const activeKasirName = (config.kasirAktif && !deletedKaryawan.includes(config.kasirAktif)) ? config.kasirAktif : fallbackKasirName;
+        return activeShift ? activeKasirName : `${activeKasirName} (Tanpa Shift)`;
+      })(),
       timestamp: Date.now()
     };
 
@@ -8381,7 +8576,12 @@ export default function App() {
         localStorage.removeItem('src_kasir_aktif');
       }
     }
-    const updated = { ...config, [key]: value };
+    let updated = { ...config, [key]: value };
+    if (key === 'daftarKaryawan' && Array.isArray(value)) {
+      updated.karyawan1 = value[0] || '';
+      updated.karyawan2 = value[1] || '';
+      updated.karyawan3 = value[2] || '';
+    }
     setConfig(updated);
     localStorage.setItem('cfg_pos_struk', JSON.stringify(updated));
 
@@ -8398,7 +8598,8 @@ export default function App() {
   };
 
   const handleSelectKasirAndStartShift = (namaKasir: string) => {
-    const selectedName = (namaKasir || 'Andi S.').trim();
+    const fallbackKasir = (config.daftarKaryawan || []).find(k => !deletedKaryawan.includes(k)) || 'Kasir';
+    const selectedName = (namaKasir || fallbackKasir).trim();
     localStorage.setItem('src_kasir_aktif', selectedName);
     handleConfigUpdate('kasirAktif', selectedName);
 
@@ -10234,7 +10435,9 @@ export default function App() {
                         <div className="px-3 py-1.5 border-b border-slate-100 dark:border-zinc-800 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 dark:text-zinc-500 flex justify-between items-center">
                           <span>{activeShift ? 'Ganti / Masuk Kasir' : 'Login Shift Kasir'}</span>
                         </div>
-                        {(config.daftarKaryawan || ['Andi S.', 'Siti R.', 'Budi H.', 'MASNGUD']).map((namaEmp) => (
+                        {((config.daftarKaryawan || []).filter(namaEmp => !deletedKaryawan.includes(namaEmp)).length > 0
+                          ? (config.daftarKaryawan || []).filter(namaEmp => !deletedKaryawan.includes(namaEmp))
+                          : ['Kasir']).map((namaEmp) => (
                           <button
                             key={namaEmp}
                             type="button"
@@ -10985,7 +11188,9 @@ export default function App() {
                                     </button>
                                   </div>
                                   <div className="flex flex-wrap gap-2 justify-center sm:justify-start">
-                                    {(config.daftarKaryawan || ['Andi S.', 'Siti R.', 'Budi H.']).map((namaKasir) => (
+                                    {((config.daftarKaryawan || []).filter(k => !deletedKaryawan.includes(k)).length > 0
+                                      ? (config.daftarKaryawan || []).filter(k => !deletedKaryawan.includes(k))
+                                      : ['Kasir']).map((namaKasir) => (
                                       <button
                                         key={namaKasir}
                                         type="button"
@@ -19798,7 +20003,9 @@ export default function App() {
                               </p>
                             </div>
                             <div className="flex flex-wrap gap-1.5 w-full sm:w-auto">
-                              {(config.daftarKaryawan || ['Andi S.', 'Siti R.', 'Budi H.', 'MASNGUD']).map((emp) => (
+                              {((config.daftarKaryawan || []).filter(emp => !deletedKaryawan.includes(emp)).length > 0
+                                ? (config.daftarKaryawan || []).filter(emp => !deletedKaryawan.includes(emp))
+                                : ['Kasir']).map((emp) => (
                                 <button
                                   key={emp}
                                   type="button"
@@ -20122,7 +20329,7 @@ export default function App() {
                       ? 'text-rose-400 bg-rose-950/30 border-rose-900/40'
                       : 'text-rose-600 bg-rose-50 border-rose-100'
                   }`}>
-                    {(config.daftarKaryawan || ['Andi S.', 'Siti R.', 'Budi H.']).length} Orang Terdaftar
+                    {(config.daftarKaryawan || []).filter(name => !deletedKaryawan.includes(name)).length} Orang Terdaftar
                   </span>
                 </div>
 
@@ -20141,13 +20348,44 @@ export default function App() {
                         e.preventDefault();
                         const val = (e.target as HTMLInputElement).value.trim();
                         if (val) {
-                          const currentList = config.daftarKaryawan || ['Andi S.', 'Siti R.', 'Budi H.'];
-                          if (currentList.includes(val)) {
+                          const activeList = (config.daftarKaryawan || []).filter(name => !deletedKaryawan.includes(name));
+                          if (activeList.some(k => k.toLowerCase().trim() === val.toLowerCase().trim())) {
                             showToast(`⚠️ Karyawan "${val}" sudah terdaftar!`);
                             return;
                           }
-                          const updated = [...currentList, val];
-                          handleConfigUpdate('daftarKaryawan', updated);
+                          const nextDelKaryawan = deletedKaryawan.filter(d => d.toLowerCase().trim() !== val.toLowerCase().trim());
+                          setDeletedKaryawan(nextDelKaryawan);
+                          localStorage.setItem('src_deleted_karyawan', JSON.stringify(nextDelKaryawan));
+
+                          const nextDelIds = {
+                            ...deletedIds,
+                            karyawan: (deletedIds.karyawan || []).filter(d => d.toLowerCase().trim() !== val.toLowerCase().trim())
+                          };
+                          setDeletedIds(nextDelIds);
+                          localStorage.setItem('src_deleted_ids', JSON.stringify(nextDelIds));
+
+                          const updated = [...activeList, val];
+                          const finalCfg = {
+                            ...config,
+                            daftarKaryawan: updated,
+                            karyawan1: updated[0] || '',
+                            karyawan2: updated[1] || '',
+                            karyawan3: updated[2] || ''
+                          };
+                          setConfig(finalCfg);
+                          localStorage.setItem('cfg_pos_struk', JSON.stringify(finalCfg));
+
+                          if (isFirestoreSync && driveUser) {
+                            syncDeletedIdsToCloud(driveUser.uid, nextDelIds).catch(err => console.warn(err));
+                            syncSettingsToCloud(driveUser.uid, {
+                              config: finalCfg,
+                              minBelanja: minBelanjaPerPoin,
+                              nilaiPoin: nilaiRupiahPerPoin
+                            }).catch(err => console.warn("Gagal sinkron karyawan baru ke Firestore:", err));
+                          }
+                          if (isDriveAutoSync && driveToken) {
+                            triggerCloudAutoSync(barang, pelanggan, transaksi);
+                          }
                           showToast(`👤 Karyawan "${val}" ditambahkan!`);
                           (e.target as HTMLInputElement).value = '';
                         }
@@ -20161,13 +20399,44 @@ export default function App() {
                       if (inputEl) {
                         const val = inputEl.value.trim();
                         if (val) {
-                          const currentList = config.daftarKaryawan || ['Andi S.', 'Siti R.', 'Budi H.'];
-                          if (currentList.includes(val)) {
+                          const activeList = (config.daftarKaryawan || []).filter(name => !deletedKaryawan.includes(name));
+                          if (activeList.some(k => k.toLowerCase().trim() === val.toLowerCase().trim())) {
                             showToast(`⚠️ Karyawan "${val}" sudah terdaftar!`);
                             return;
                           }
-                          const updated = [...currentList, val];
-                          handleConfigUpdate('daftarKaryawan', updated);
+                          const nextDelKaryawan = deletedKaryawan.filter(d => d.toLowerCase().trim() !== val.toLowerCase().trim());
+                          setDeletedKaryawan(nextDelKaryawan);
+                          localStorage.setItem('src_deleted_karyawan', JSON.stringify(nextDelKaryawan));
+
+                          const nextDelIds = {
+                            ...deletedIds,
+                            karyawan: (deletedIds.karyawan || []).filter(d => d.toLowerCase().trim() !== val.toLowerCase().trim())
+                          };
+                          setDeletedIds(nextDelIds);
+                          localStorage.setItem('src_deleted_ids', JSON.stringify(nextDelIds));
+
+                          const updated = [...activeList, val];
+                          const finalCfg = {
+                            ...config,
+                            daftarKaryawan: updated,
+                            karyawan1: updated[0] || '',
+                            karyawan2: updated[1] || '',
+                            karyawan3: updated[2] || ''
+                          };
+                          setConfig(finalCfg);
+                          localStorage.setItem('cfg_pos_struk', JSON.stringify(finalCfg));
+
+                          if (isFirestoreSync && driveUser) {
+                            syncDeletedIdsToCloud(driveUser.uid, nextDelIds).catch(err => console.warn(err));
+                            syncSettingsToCloud(driveUser.uid, {
+                              config: finalCfg,
+                              minBelanja: minBelanjaPerPoin,
+                              nilaiPoin: nilaiRupiahPerPoin
+                            }).catch(err => console.warn("Gagal sinkron karyawan baru ke Firestore:", err));
+                          }
+                          if (isDriveAutoSync && driveToken) {
+                            triggerCloudAutoSync(barang, pelanggan, transaksi);
+                          }
                           showToast(`👤 Karyawan "${val}" ditambahkan!`);
                           inputEl.value = '';
                         } else {
@@ -20191,7 +20460,7 @@ export default function App() {
                     ? 'divide-zinc-850 bg-zinc-900 border-zinc-800'
                     : 'divide-slate-100 bg-white border-slate-200/60'
                 }`}>
-                  {(config.daftarKaryawan || ['Andi S.', 'Siti R.', 'Budi H.']).map((namaEmp, idx) => {
+                  {(config.daftarKaryawan || []).filter(name => !deletedKaryawan.includes(name)).map((namaEmp, idx) => {
                     return (
                       <div key={idx} className="flex items-center justify-between text-xs pt-1.5 pb-0.5 first:pt-0">
                         <span className={`font-semibold ${
@@ -20200,25 +20469,42 @@ export default function App() {
                         <button
                           type="button"
                           onClick={() => {
-                            const currentList = config.daftarKaryawan || ['Andi S.', 'Siti R.', 'Budi H.'];
-                            if (currentList.length <= 1) {
+                            const activeList = (config.daftarKaryawan || []).filter(name => !deletedKaryawan.includes(name));
+                            if (activeList.length <= 1) {
                               showToast('⚠️ Minimal harus ada 1 karyawan terdaftar!');
                               return;
                             }
-                            const updated = currentList.filter(name => name !== namaEmp);
+                            const updated = activeList.filter(name => name !== namaEmp);
                             let newActive = config.kasirAktif;
                             if (config.kasirAktif === namaEmp) {
-                              newActive = updated[0];
+                              newActive = updated[0] || '';
                             }
+
+                            // Record permanent deletion so it is never resurrected by sync or defaults
+                            const newDeletedEmployees = Array.from(new Set([...deletedKaryawan, namaEmp]));
+                            setDeletedKaryawan(newDeletedEmployees);
+                            localStorage.setItem('src_deleted_karyawan', JSON.stringify(newDeletedEmployees));
+
+                            const nextDeletedIds = {
+                              ...deletedIds,
+                              karyawan: Array.from(new Set([...(deletedIds.karyawan || []), namaEmp]))
+                            };
+                            setDeletedIds(nextDeletedIds);
+                            localStorage.setItem('src_deleted_ids', JSON.stringify(nextDeletedIds));
+
                             const finalConfig = { 
                               ...config, 
-                              daftarKaryawan: updated, 
-                              kasirAktif: newActive 
+                              daftarKaryawan: updated.length > 0 ? updated : ['Kasir'], 
+                              kasirAktif: newActive,
+                              karyawan1: updated[0] || '',
+                              karyawan2: updated[1] || '',
+                              karyawan3: updated[2] || ''
                             };
                             setConfig(finalConfig);
                             localStorage.setItem('cfg_pos_struk', JSON.stringify(finalConfig));
 
                             if (isFirestoreSync && driveUser) {
+                              syncDeletedIdsToCloud(driveUser.uid, nextDeletedIds).catch(err => console.warn(err));
                               syncSettingsToCloud(driveUser.uid, {
                                 config: finalConfig,
                                 minBelanja: minBelanjaPerPoin,
@@ -20250,7 +20536,9 @@ export default function App() {
                     Pilih Kasir yang Sedang Bertugas:
                   </label>
                   <div className="grid grid-cols-2 xs:grid-cols-3 gap-2 max-h-[140px] overflow-y-auto pr-1">
-                    {(config.daftarKaryawan || ['Andi S.', 'Siti R.', 'Budi H.']).map((namaEmp, idx) => {
+                    {((config.daftarKaryawan || []).filter(name => !deletedKaryawan.includes(name)).length > 0
+                      ? (config.daftarKaryawan || []).filter(name => !deletedKaryawan.includes(name))
+                      : ['Kasir']).map((namaEmp, idx) => {
                       const isCurrent = config.kasirAktif === namaEmp;
                       return (
                         <button

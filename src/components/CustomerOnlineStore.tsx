@@ -4,7 +4,7 @@ import {
   ShoppingBag, Search, X, Plus, Minus, Truck, Store, 
   CheckCircle2, AlertCircle, MessageCircle, Trash2,
   ChevronRight, ChevronLeft, QrCode, CreditCard, DollarSign, Send, Info,
-  User, UserCheck, Key, LogOut, ShieldCheck, Award, Clock, Package, ListOrdered,
+  User, UserCheck, Key, LogOut, ShieldCheck, Award,
   Camera, Copy, Check, Sparkles, Tag, ArrowRight, ArrowUp, Loader2, Cloud
 } from 'lucide-react';
 import CameraScanner from './CameraScanner';
@@ -455,164 +455,6 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
   // Order completed modal state
   const [placedOrder, setPlacedOrder] = useState<PesananOnline | null>(null);
 
-  // Buyer Order Status modal state
-  const [isOrderStatusModalOpen, setIsOrderStatusModalOpen] = useState(false);
-  const [localHistoryVersion, setLocalHistoryVersion] = useState(0);
-
-  // Retrieve store's latest orders (from prop or localStorage 'src_pesanan_online')
-  const allStoreOrders = useMemo(() => {
-    if (existingOrders && existingOrders.length > 0) return existingOrders;
-    if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('src_pesanan_online');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed)) return parsed;
-        }
-      } catch (e) {}
-    }
-    return existingOrders || [];
-  }, [existingOrders]);
-
-  // Delete single local order from customer's history
-  const handleDeleteLocalOrder = (orderId: string) => {
-    if (typeof window !== 'undefined') {
-      try {
-        const savedIdsStr = localStorage.getItem('src_online_placed_order_ids');
-        const savedIds: string[] = savedIdsStr ? JSON.parse(savedIdsStr) : [];
-        const updatedIds = savedIds.filter(id => id !== orderId);
-        localStorage.setItem('src_online_placed_order_ids', JSON.stringify(updatedIds));
-
-        const savedFullStr = localStorage.getItem('src_online_placed_orders_full');
-        const savedFull: PesananOnline[] = savedFullStr ? JSON.parse(savedFullStr) : [];
-        const updatedFull = savedFull.filter(o => o.id !== orderId);
-        localStorage.setItem('src_online_placed_orders_full', JSON.stringify(updatedFull));
-      } catch (e) {}
-    }
-    setLocalHistoryVersion(v => v + 1);
-  };
-
-  // Clear completed / cancelled local orders from customer's history
-  const handleClearCompletedOrCancelledLocalOrders = () => {
-    if (typeof window !== 'undefined') {
-      try {
-        const savedFullStr = localStorage.getItem('src_online_placed_orders_full');
-        const savedFull: PesananOnline[] = savedFullStr ? JSON.parse(savedFullStr) : [];
-        
-        const finishedIds = savedFull
-          .filter(o => o.status === 'Selesai' || o.status === 'Dibatalkan')
-          .map(o => o.id);
-
-        const updatedFull = savedFull.filter(o => o.status !== 'Selesai' && o.status !== 'Dibatalkan');
-        localStorage.setItem('src_online_placed_orders_full', JSON.stringify(updatedFull));
-
-        const savedIdsStr = localStorage.getItem('src_online_placed_order_ids');
-        const savedIds: string[] = savedIdsStr ? JSON.parse(savedIdsStr) : [];
-        const updatedIds = savedIds.filter(id => !finishedIds.includes(id));
-        localStorage.setItem('src_online_placed_order_ids', JSON.stringify(updatedIds));
-      } catch (e) {}
-    }
-    setLocalHistoryVersion(v => v + 1);
-  };
-
-  // Filter buyer's online orders
-  const buyerOrders = useMemo(() => {
-    let localOrderIds: string[] = [];
-    let localPlacedOrders: PesananOnline[] = [];
-    if (typeof window !== 'undefined') {
-      try {
-        const savedIds = localStorage.getItem('src_online_placed_order_ids');
-        if (savedIds) localOrderIds = JSON.parse(savedIds);
-
-        const savedFull = localStorage.getItem('src_online_placed_orders_full');
-        if (savedFull) {
-          const parsedFull = JSON.parse(savedFull);
-          if (Array.isArray(parsedFull)) {
-            localPlacedOrders = parsedFull.filter(o => !o.namaPembeli?.toLowerCase().includes('ratna') && !o.id?.includes('0722-1001'));
-          }
-        }
-      } catch (e) {}
-    }
-
-    const cleanMemberPhone = loggedInMember?.telepon ? normalizePhone(loggedInMember.telepon) : '';
-    const cleanCustomerPhone = customerPhone ? normalizePhone(customerPhone) : '';
-    const cleanMemberName = loggedInMember?.nama?.toLowerCase().trim() || '';
-
-    // Create a map of store orders by ID
-    const storeOrderMap = new Map<string, PesananOnline>();
-    allStoreOrders.forEach(o => storeOrderMap.set(o.id, o));
-
-    // Also match store orders that belong to logged in member or customer phone
-    allStoreOrders.forEach(o => {
-      const cleanOrderPhone = o.teleponPembeli ? normalizePhone(o.teleponPembeli) : '';
-      let isMatch = false;
-      if (cleanMemberPhone && cleanOrderPhone && (cleanOrderPhone === cleanMemberPhone || cleanOrderPhone.includes(cleanMemberPhone) || cleanMemberPhone.includes(cleanOrderPhone))) isMatch = true;
-      if (cleanCustomerPhone && cleanOrderPhone && (cleanOrderPhone === cleanCustomerPhone || cleanOrderPhone.includes(cleanCustomerPhone) || cleanCustomerPhone.includes(cleanOrderPhone))) isMatch = true;
-      if (cleanMemberName && o.namaPembeli && o.namaPembeli.toLowerCase().trim() === cleanMemberName) isMatch = true;
-
-      if (isMatch) {
-        if (!localOrderIds.includes(o.id)) {
-          localOrderIds.push(o.id);
-        }
-        if (!localPlacedOrders.some(lo => lo.id === o.id)) {
-          localPlacedOrders.push(o);
-        }
-      }
-    });
-
-    // Update status of local orders based on store orders
-    const updatedLocalPlacedOrders: PesananOnline[] = localPlacedOrders.map(localOrder => {
-      if (storeOrderMap.has(localOrder.id)) {
-        // Order exists in store -> update with current store version
-        return storeOrderMap.get(localOrder.id)!;
-      } else {
-        // Order is NOT found in store -> cashier deleted/cancelled it from store database!
-        if (localOrder.status !== 'Dibatalkan') {
-          return {
-            ...localOrder,
-            status: 'Dibatalkan',
-            alasanBatal: localOrder.alasanBatal || 'Pesanan telah dihapus / dibatalkan oleh Kasir Toko'
-          };
-        }
-        return localOrder;
-      }
-    });
-
-    const orderMap = new Map<string, PesananOnline>();
-    updatedLocalPlacedOrders.forEach(o => orderMap.set(o.id, o));
-
-    const combinedOrders = Array.from(orderMap.values());
-
-    // If a member is logged in, restrict orders view to only orders placed by this member
-    let finalOrders = combinedOrders;
-    if (loggedInMember) {
-      finalOrders = combinedOrders.filter(o => {
-        const matchName = cleanMemberName && o.namaPembeli && o.namaPembeli.toLowerCase().trim() === cleanMemberName;
-        const cleanOrderPhone = o.teleponPembeli ? normalizePhone(o.teleponPembeli) : '';
-        const matchPhone = cleanMemberPhone.length >= 8 && cleanOrderPhone.length >= 8 && (
-          cleanOrderPhone === cleanMemberPhone || 
-          cleanOrderPhone.endsWith(cleanMemberPhone) || 
-          cleanMemberPhone.endsWith(cleanOrderPhone)
-        );
-        return matchName || matchPhone;
-      });
-    }
-
-    // Update localPlacedOrders back to localStorage if status updated
-    if (typeof window !== 'undefined' && localOrderIds.length > 0) {
-      try {
-        const filteredToSave = combinedOrders.filter(o => localOrderIds.includes(o.id));
-        localStorage.setItem('src_online_placed_orders_full', JSON.stringify(filteredToSave));
-      } catch (e) {}
-    }
-
-    return finalOrders.sort((a, b) => b.timestamp - a.timestamp);
-  }, [existingOrders, allStoreOrders, loggedInMember, customerPhone, localHistoryVersion]);
-
-  const activeBuyerOrders = useMemo(() => {
-    return buyerOrders.filter(o => o.status !== 'Selesai' && o.status !== 'Dibatalkan');
-  }, [buyerOrders]);
-
   const isStoreOpen = config.tokoOnlineAktif !== false; // Default true unless explicitly closed
   const minOrder = config.minOrderDelivery || 0;
   const deliveryFee = deliveryType === 'Pesan Antar' ? (config.ongkirDelivery || 5000) : 0;
@@ -629,7 +471,7 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
 
   // Handle Mobile / Browser Back Button (popstate) safely
   useEffect(() => {
-    const isAnyModalOpen = isCartOpen || isOrderStatusModalOpen || !!selectedPromoModal || isDigitalCardOpen || isMemberCardScannerOpen || isMemberModalOpen;
+    const isAnyModalOpen = isCartOpen || !!selectedPromoModal || isDigitalCardOpen || isMemberCardScannerOpen || isMemberModalOpen;
 
     if (isAnyModalOpen) {
       try {
@@ -640,7 +482,6 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
     const handlePopState = () => {
       // 1. Close open modal first if active
       if (isCartOpen) { setIsCartOpen(false); return; }
-      if (isOrderStatusModalOpen) { setIsOrderStatusModalOpen(false); return; }
       if (selectedPromoModal) { setSelectedPromoModal(null); return; }
       if (isDigitalCardOpen) { setIsDigitalCardOpen(false); return; }
       if (isMemberCardScannerOpen) { setIsMemberCardScannerOpen(false); return; }
@@ -656,7 +497,6 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
     return () => window.removeEventListener('popstate', handlePopState);
   }, [
     isCartOpen,
-    isOrderStatusModalOpen,
     selectedPromoModal,
     isDigitalCardOpen,
     isMemberCardScannerOpen,
@@ -985,20 +825,6 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
           <div className="flex items-center gap-2 ml-auto">
             <button
               type="button"
-              onClick={() => setIsOrderStatusModalOpen(true)}
-              className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[11px] font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-amber-400/30 active:scale-95"
-            >
-              <Clock className="w-3.5 h-3.5 text-amber-400" />
-              <span>Status Pesanan</span>
-              {activeBuyerOrders.length > 0 && (
-                <span className="bg-amber-500 text-slate-950 text-[10px] font-black px-1.5 py-0.2 rounded-full animate-pulse">
-                  {activeBuyerOrders.length}
-                </span>
-              )}
-            </button>
-
-            <button
-              type="button"
               onClick={() => loggedInMember ? handleMemberLogout() : setIsMemberModalOpen(true)}
               className="px-2.5 py-1 bg-white/10 hover:bg-white/20 active:scale-95 text-white text-[11px] font-bold rounded-xl transition-all flex items-center gap-1 cursor-pointer border border-white/10"
             >
@@ -1016,24 +842,6 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
             </button>
           </div>
         </div>
-
-        {/* ACTIVE BUYER ORDERS ALERT BANNER */}
-        {activeBuyerOrders.length > 0 && (
-          <div className="bg-gradient-to-r from-amber-600 via-amber-700 to-orange-700 text-white px-4 py-2.5 shadow-sm flex items-center justify-between gap-2 text-xs font-bold">
-            <div className="flex items-center gap-2 truncate">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-300 shrink-0 animate-ping" />
-              <span className="truncate">📦 Anda memiliki <strong className="underline decoration-2">{activeBuyerOrders.length} pesanan online</strong> yang sedang berjalan!</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setIsOrderStatusModalOpen(true)}
-              className="bg-white text-amber-900 hover:bg-amber-50 px-3 py-1 rounded-xl font-black text-xs transition-all shadow-xs shrink-0 cursor-pointer flex items-center gap-1 active:scale-95"
-            >
-              <span>Lihat Status</span>
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
 
         {/* INTERACTIVE PROMO BANNER CAROUSEL / SLIDER */}
         {activePromoBanners.length > 0 && (
@@ -1423,27 +1231,6 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
 
       {/* FLOATING ACTION BUTTONS AT BOTTOM RIGHT (POJOK KANAN BAWAH) */}
       <div className={`fixed right-4 z-40 flex flex-col items-end gap-2.5 transition-all duration-300 ${cartDetails.length > 0 && !isCartOpen ? 'bottom-22' : 'bottom-5'}`}>
-        
-        {/* FLOATING ORDER STATUS BUTTON (WHEN BUYER HAS ORDERS) */}
-        {buyerOrders.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setIsOrderStatusModalOpen(true)}
-            className="bg-slate-900 hover:bg-slate-800 text-white px-3 py-2.5 sm:px-4 sm:py-2.5 rounded-2xl shadow-2xl border border-slate-700 font-extrabold text-xs flex items-center gap-2 transition-all cursor-pointer active:scale-95 hover:scale-105"
-            title="Lihat Status Pesanan Saya"
-          >
-            <div className="relative">
-              <Clock className="w-4 h-4 text-amber-400" />
-              {activeBuyerOrders.length > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 bg-amber-500 text-slate-950 text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center animate-bounce">
-                  {activeBuyerOrders.length}
-                </span>
-              )}
-            </div>
-            <span>Status Pesanan</span>
-          </button>
-        )}
-
         {/* FLOATING "KEMBALI KE ATAS" BUTTON WHEN SCROLLED DOWN */}
         {showScrollTop && (
           <button
@@ -1858,235 +1645,10 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
 
               <button
                 type="button"
-                onClick={() => {
-                  setPlacedOrder(null);
-                  setIsOrderStatusModalOpen(true);
-                }}
-                className="w-full py-3 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-2xl font-extrabold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
-              >
-                <Clock className="w-4 h-4 text-amber-600" />
-                <span>Lihat Status Pesanan Saya</span>
-              </button>
-
-              <button
-                type="button"
                 onClick={() => setPlacedOrder(null)}
-                className="w-full py-2.5 text-xs font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
+                className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-2xl font-extrabold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
               >
-                Selesai / Belanja Lagi
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* BUYER ORDER STATUS MODAL */}
-      {isOrderStatusModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xs z-[200] flex items-center justify-center p-3 sm:p-4">
-          <div className="bg-white w-full max-w-lg max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
-            {/* MODAL HEADER */}
-            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-red-600 to-red-700 text-white">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 bg-white/20 rounded-xl">
-                  <Clock className="w-5 h-5 text-white" />
-                </div>
-                <div>
-                  <h3 className="font-extrabold text-sm text-white">
-                    Status Pesanan Saya
-                  </h3>
-                  <p className="text-[11px] text-red-100">
-                    {loggedInMember ? `Member: ${loggedInMember.nama}` : 'Riwayat & Status Pesanan Online'}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsOrderStatusModalOpen(false)}
-                className="p-1.5 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* MODAL BODY */}
-            <div className="p-4 overflow-y-auto space-y-4 flex-1 bg-slate-50">
-              {buyerOrders.length === 0 ? (
-                <div className="text-center py-12 px-4 space-y-3">
-                  <div className="w-16 h-16 bg-slate-200/70 text-slate-400 rounded-full flex items-center justify-center mx-auto">
-                    <Clock className="w-8 h-8 text-slate-400" />
-                  </div>
-                  <div>
-                    <h4 className="font-extrabold text-slate-800 text-sm">Belum Ada Pesanan Online</h4>
-                    <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
-                      Pesanan yang Anda buat di portal online ini akan otomatis tersimpan &amp; terpantau status pemrosesannya di sini.
-                    </p>
-                  </div>
-                  {!loggedInMember && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsOrderStatusModalOpen(false);
-                        setIsMemberModalOpen(true);
-                      }}
-                      className="mt-2 px-4 py-2 bg-red-600 text-white rounded-xl text-xs font-extrabold hover:bg-red-700 transition-all cursor-pointer inline-flex items-center gap-1.5"
-                    >
-                      <UserCheck className="w-4 h-4" />
-                      <span>Login Member Cek Pesanan</span>
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {buyerOrders.map((order) => {
-                    let badgeBg = 'bg-amber-100 text-amber-800 border-amber-300';
-                    let statusLabel = 'Menunggu Konfirmasi Kasir';
-                    let stepIndex = 1;
-
-                    if (order.status === 'Diproses') {
-                      badgeBg = 'bg-blue-100 text-blue-800 border-blue-300';
-                      statusLabel = 'Sedang Diproses Toko';
-                      stepIndex = 2;
-                    } else if (order.status === 'Siap Diambil/Dikirim') {
-                      badgeBg = 'bg-purple-100 text-purple-800 border-purple-300';
-                      statusLabel = 'Siap Diambil / Dikirim Toko!';
-                      stepIndex = 3;
-                    } else if (order.status === 'Selesai') {
-                      badgeBg = 'bg-emerald-100 text-emerald-800 border-emerald-300';
-                      statusLabel = 'Pesanan Selesai & Lunas';
-                      stepIndex = 4;
-                    } else if (order.status === 'Dibatalkan') {
-                      badgeBg = 'bg-rose-100 text-rose-800 border-rose-300';
-                      statusLabel = 'Pesanan Dibatalkan Toko';
-                      stepIndex = 0;
-                    }
-
-                    return (
-                      <div
-                        key={order.id}
-                        className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3 relative overflow-hidden"
-                      >
-                        {/* ORDER HEADER */}
-                        <div className="flex items-start justify-between gap-2 pb-3 border-b border-slate-100">
-                          <div>
-                            <span className="text-[10px] font-mono font-black text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-200">
-                              {order.id}
-                            </span>
-                            <p className="text-[11px] text-slate-400 mt-1">
-                              {order.waktu}
-                            </p>
-                          </div>
-
-                          <span className={`text-[10px] font-black px-2.5 py-1 rounded-full border shadow-3xs ${badgeBg}`}>
-                            {statusLabel}
-                          </span>
-                        </div>
-
-                        {/* STEPPER PROGRESS FOR ACTIVE / NORMAL ORDERS */}
-                        {order.status !== 'Dibatalkan' ? (
-                          <div className="py-2 px-2 bg-slate-50 rounded-xl border border-slate-100 space-y-1.5">
-                            <div className="flex items-center justify-between text-[10px] font-extrabold text-slate-500 px-1">
-                              <span className={stepIndex >= 1 ? 'text-red-600 font-black' : ''}>1. Pesan</span>
-                              <span className={stepIndex >= 2 ? 'text-blue-600 font-black' : ''}>2. Diproses</span>
-                              <span className={stepIndex >= 3 ? 'text-purple-600 font-black' : ''}>3. Siap</span>
-                              <span className={stepIndex >= 4 ? 'text-emerald-600 font-black' : ''}>4. Selesai</span>
-                            </div>
-                            <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden flex">
-                              <div 
-                                className={`h-full transition-all duration-500 ${
-                                  stepIndex === 4 ? 'bg-emerald-500 w-full' :
-                                  stepIndex === 3 ? 'bg-purple-500 w-3/4' :
-                                  stepIndex === 2 ? 'bg-blue-500 w-1/2' : 'bg-amber-500 w-1/4 animate-pulse'
-                                }`} 
-                              />
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800">
-                            <p className="font-bold">❌ Pesanan ini telah dibatalkan oleh kasir/toko.</p>
-                            {order.alasanBatal && (
-                              <p className="text-[11px] mt-0.5 text-rose-600">Alasan: {order.alasanBatal}</p>
-                            )}
-                          </div>
-                        )}
-
-                        {/* ORDER ITEMS */}
-                        <div className="space-y-1 text-xs pt-1">
-                          <p className="text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">
-                            Daftar Barang ({order.items.length}):
-                          </p>
-                          <div className="bg-slate-50 p-2.5 rounded-xl space-y-1 text-[11px]">
-                            {order.items.map((item, idx) => (
-                              <div key={idx} className="flex justify-between items-center text-slate-700">
-                                <span>• {item.nama} <strong className="text-slate-900">({item.qty} {item.satuanNama || 'Pcs'})</strong></span>
-                                <span className="font-bold">{formatRp(item.subtotal)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* ORDER METADATA */}
-                        <div className="flex flex-wrap items-center justify-between text-xs pt-2 border-t border-slate-100 gap-2">
-                          <div>
-                            <span className="text-[10px] text-slate-400 block">Metode Pembayaran &amp; Pengiriman:</span>
-                            <span className="font-bold text-slate-800">{order.tipePengiriman} • {order.metodePembayaran}</span>
-                          </div>
-
-                          <div className="text-right">
-                            <span className="text-[10px] text-slate-400 block">Total Pembayaran:</span>
-                            <span className="font-black text-red-600 text-sm">{formatRp(order.totalBayar)}</span>
-                          </div>
-                        </div>
-
-                        {/* ACTION BUTTONS (WA CHAT & HAPUS RIWAYAT) */}
-                        <div className="pt-2 flex items-center gap-2">
-                          <a
-                            href={getWhatsAppMessageUrl(order)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex-1 py-2 px-3 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                          >
-                            <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
-                            <span>Tanya / Chat WA Kasir</span>
-                          </a>
-
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteLocalOrder(order.id)}
-                            className="px-3 py-2 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1 cursor-pointer shrink-0 active:scale-95"
-                            title="Hapus pesanan ini dari riwayat Anda"
-                          >
-                            <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-                            <span className="hidden sm:inline">Hapus</span>
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {buyerOrders.some(o => o.status === 'Selesai' || o.status === 'Dibatalkan') && (
-                    <div className="pt-2 border-t border-slate-200/80">
-                      <button
-                        type="button"
-                        onClick={handleClearCompletedOrCancelledLocalOrders}
-                        className="w-full py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 rounded-2xl font-extrabold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-98 shadow-2xs"
-                      >
-                        <Trash2 className="w-4 h-4 text-rose-600" />
-                        <span>Bersihkan Riwayat Pesanan (Selesai &amp; Dibatalkan)</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* MODAL FOOTER */}
-            <div className="p-3 border-t border-slate-100 bg-white text-center">
-              <button
-                type="button"
-                onClick={() => setIsOrderStatusModalOpen(false)}
-                className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl transition-all cursor-pointer"
-              >
-                Tutup
+                <span>Selesai / Belanja Lagi</span>
               </button>
             </div>
           </div>

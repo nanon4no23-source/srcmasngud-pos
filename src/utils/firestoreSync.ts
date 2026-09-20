@@ -235,7 +235,7 @@ export const listenToRealtimeCloud = (
     onTransaksi: (trx: Transaksi[]) => void;
     onPesananOnline?: (orders: PesananOnline[]) => void;
     onSettings?: (settings: { config: any; minBelanja?: number; nilaiPoin?: number }) => void;
-    onDeletedIds?: (deletedIds: { barang: string[]; pelanggan: string[]; transaksi: string[] }) => void;
+    onDeletedIds?: (deletedIds: { barang: string[]; pelanggan: string[]; transaksi: string[]; karyawan?: string[] }) => void;
   }
 ) => {
   const unsubBarang = onSnapshot(
@@ -305,7 +305,8 @@ export const listenToRealtimeCloud = (
             callbacks.onDeletedIds!({
               barang: Array.isArray(data.barang) ? data.barang : [],
               pelanggan: Array.isArray(data.pelanggan) ? data.pelanggan : [],
-              transaksi: Array.isArray(data.transaksi) ? data.transaksi : []
+              transaksi: Array.isArray(data.transaksi) ? data.transaksi : [],
+              karyawan: Array.isArray(data.karyawan) ? data.karyawan : []
             });
           }
         },
@@ -350,7 +351,11 @@ export const listenToRealtimeCloud = (
  */
 export const fetchCloudDatabase = async (uid: string) => {
   const path = `users/${uid}`;
-  try {
+  const timeoutPromise = new Promise<null>((_, reject) =>
+    setTimeout(() => reject(new Error('Koneksi database awan melebihi batas waktu (timeout).')), 8000)
+  );
+
+  const fetchPromise = (async () => {
     const userDocRef = doc(db, 'users', uid);
     const userSnap = await getDoc(userDocRef);
     const settings = userSnap.exists() ? userSnap.data() : null;
@@ -375,13 +380,14 @@ export const fetchCloudDatabase = async (uid: string) => {
 
     const docRef = doc(db, `users/${uid}/metadata`, 'deleted_ids');
     const docSnap = await getDoc(docRef);
-    let deletedIds = { barang: [] as string[], pelanggan: [] as string[], transaksi: [] as string[] };
+    let deletedIds = { barang: [] as string[], pelanggan: [] as string[], transaksi: [] as string[], karyawan: [] as string[] };
     if (docSnap.exists()) {
       const data = docSnap.data();
       deletedIds = {
         barang: Array.isArray(data.barang) ? data.barang : [],
         pelanggan: Array.isArray(data.pelanggan) ? data.pelanggan : [],
-        transaksi: Array.isArray(data.transaksi) ? data.transaksi : []
+        transaksi: Array.isArray(data.transaksi) ? data.transaksi : [],
+        karyawan: Array.isArray(data.karyawan) ? data.karyawan : []
       };
     }
 
@@ -396,6 +402,10 @@ export const fetchCloudDatabase = async (uid: string) => {
         nilaiPoin: settings.nilaiPoin
       } : null
     };
+  })();
+
+  try {
+    return await Promise.race([fetchPromise, timeoutPromise]);
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
     return null;
@@ -407,7 +417,7 @@ export const fetchCloudDatabase = async (uid: string) => {
  */
 export const syncDeletedIdsToCloud = async (
   uid: string,
-  deletedIds: { barang: string[]; pelanggan: string[]; transaksi: string[] }
+  deletedIds: { barang: string[]; pelanggan: string[]; transaksi: string[]; karyawan?: string[] }
 ) => {
   const path = `users/${uid}/metadata/deleted_ids`;
   try {
@@ -430,11 +440,12 @@ export const fetchDeletedIdsFromCloud = async (uid: string) => {
       return {
         barang: Array.isArray(data.barang) ? data.barang : [],
         pelanggan: Array.isArray(data.pelanggan) ? data.pelanggan : [],
-        transaksi: Array.isArray(data.transaksi) ? data.transaksi : []
+        transaksi: Array.isArray(data.transaksi) ? data.transaksi : [],
+        karyawan: Array.isArray(data.karyawan) ? data.karyawan : []
       };
     }
   } catch (error) {}
-  return { barang: [], pelanggan: [], transaksi: [] };
+  return { barang: [], pelanggan: [], transaksi: [], karyawan: [] };
 };
 
 /**

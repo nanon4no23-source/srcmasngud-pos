@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { PesananOnline, ItemBarang, DetailItemPesananOnline, ConfigStruk, PromoBanner } from '../types';
+import { resolveStoreId } from '../utils/firestoreSync';
 import { 
   ShoppingBag, CheckCircle2, Clock, Truck, Store, XCircle, 
   MessageCircle, Printer, Share2, AlertCircle, Eye, ChevronRight,
@@ -298,6 +299,7 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
   const PUBLIC_ONLINE_STORE_URL = 'https://ais-pre-ygntom22qz77b7nows5adl-464365808003.asia-southeast1.run.app/?mode=pembeli';
 
   const getPublicStoreUrl = () => {
+    const storeId = resolveStoreId();
     if (config?.customDomainOnlineStore && config.customDomainOnlineStore.trim()) {
       let custom = config.customDomainOnlineStore.trim();
       if (!custom.startsWith('http://') && !custom.startsWith('https://')) {
@@ -306,23 +308,26 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
       try {
         const u = new URL(custom);
         u.searchParams.set('mode', 'pembeli');
+        u.searchParams.set('store', storeId);
         return u.toString();
       } catch (e) {
-        return custom.includes('?') ? `${custom}&mode=pembeli` : `${custom}?mode=pembeli`;
+        return custom.includes('?') ? `${custom}&mode=pembeli&store=${storeId}` : `${custom}?mode=pembeli&store=${storeId}`;
       }
     }
 
     try {
       const currentOrigin = window.location.origin;
+      let baseUrl = PUBLIC_ONLINE_STORE_URL;
       // If running inside Android APK webview or local file/localhost, return official public URL
-      if (!currentOrigin || currentOrigin.includes('localhost') || currentOrigin.includes('127.0.0.1') || currentOrigin.startsWith('file://')) {
-        return PUBLIC_ONLINE_STORE_URL;
+      if (currentOrigin && !currentOrigin.includes('localhost') && !currentOrigin.includes('127.0.0.1') && !currentOrigin.startsWith('file://')) {
+        baseUrl = window.location.href;
       }
-      const url = new URL(window.location.href);
+      const url = new URL(baseUrl);
       url.searchParams.set('mode', 'pembeli');
+      url.searchParams.set('store', storeId);
       return url.toString();
     } catch (e) {
-      return PUBLIC_ONLINE_STORE_URL;
+      return `${PUBLIC_ONLINE_STORE_URL}&store=${storeId}`;
     }
   };
 
@@ -1851,6 +1856,17 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
                     <span>Tes Buka</span>
                   </a>
                 </div>
+              </div>
+
+              {/* HOW TO ACTIVATE NOTICE */}
+              <div className="bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 p-3.5 rounded-2xl space-y-1.5 text-blue-900 dark:text-blue-200">
+                <div className="flex items-center gap-2 font-extrabold text-xs text-blue-800 dark:text-blue-300">
+                  <AlertCircle className="w-4 h-4 text-blue-600 shrink-0" />
+                  <span>Jika Halaman Menampilkan "Tidak Ditemukan" (404):</span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-blue-800 dark:text-blue-200">
+                  Di Google AI Studio, link publik resmi (<code>ais-pre-...</code>) baru aktif setelah Anda menekan tombol <strong>"Share"</strong> (Bagikan) di pojok kanan atas layar AI Studio lalu pilih <strong>"Publish"</strong>. Setelah di-publish, link dapat diakses bebas dari Chrome, Opera Mini, &amp; HP pelanggan.
+                </p>
               </div>
 
               {/* QR CODE GENERATOR DISPLAY */}

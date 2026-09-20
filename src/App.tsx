@@ -106,7 +106,8 @@ import {
   syncDeletedIdsToCloud,
   loginOrRegisterStoreAccount,
   getStoredStoreAccount,
-  logoutStoreAccount
+  logoutStoreAccount,
+  resolveStoreId
 } from './utils/firestoreSync';
 import { exportAndSaveFile, downloadRemoteFileBlob } from './utils/fileDownloader';
 import { BuildApkModal } from './components/BuildApkModal';
@@ -2909,8 +2910,31 @@ export default function App() {
         onPesananOnline: (orders) => {
           if (orders && Array.isArray(orders)) {
             setPesananOnline(prev => {
+              const prevMap = new Map<string, PesananOnline>(prev.map(o => [o.id, o]));
+              const targetUid = driveUser?.uid || resolveStoreId();
+
+              // Merge incoming cloud orders with local state to protect completed orders
+              const mergedOrders: PesananOnline[] = orders.map(incoming => {
+                const existingLocal = prevMap.get(incoming.id);
+                // If locally it was already completed (Selesai), preserve Selesai and ensure Cloud is updated
+                if (existingLocal && existingLocal.status === 'Selesai' && incoming.status !== 'Selesai') {
+                  if (targetUid) {
+                    syncPesananOnlineToCloud(targetUid, { ...incoming, status: 'Selesai' });
+                  }
+                  return { ...incoming, status: 'Selesai' };
+                }
+                return incoming;
+              });
+
+              // Also preserve any local orders that might still be syncing
+              prev.forEach(localOrd => {
+                if (!mergedOrders.some(o => o.id === localOrd.id)) {
+                  mergedOrders.push(localOrd);
+                }
+              });
+
               const prevPending = prev.filter(o => o.status === 'Menunggu Konfirmasi').map(o => o.id);
-              const newPendingOrders = orders.filter(o => o.status === 'Menunggu Konfirmasi' && !prevPending.includes(o.id));
+              const newPendingOrders = mergedOrders.filter(o => o.status === 'Menunggu Konfirmasi' && !prevPending.includes(o.id));
               
               if (newPendingOrders.length > 0) {
                 const latest = newPendingOrders[0];
@@ -2921,8 +2945,8 @@ export default function App() {
                 } catch (e) {}
               }
 
-              localStorage.setItem('src_pesanan_online', JSON.stringify(orders));
-              return orders;
+              localStorage.setItem('src_pesanan_online', JSON.stringify(mergedOrders));
+              return mergedOrders;
             });
           }
         },
@@ -3964,8 +3988,9 @@ export default function App() {
     setPesananOnline(updatedList);
     localStorage.setItem('src_pesanan_online', JSON.stringify(updatedList));
 
-    if (driveUser && updatedTarget) {
-      syncPesananOnlineToCloud(driveUser.uid, updatedTarget);
+    const targetUid = driveUser?.uid || resolveStoreId();
+    if (targetUid && updatedTarget) {
+      syncPesananOnlineToCloud(targetUid, updatedTarget);
     }
 
     if (status === 'Dibatalkan') {
@@ -3980,8 +4005,9 @@ export default function App() {
     setPesananOnline(updatedList);
     localStorage.setItem('src_pesanan_online', JSON.stringify(updatedList));
 
-    if (driveUser) {
-      syncPesananOnlineToCloud(driveUser.uid, updatedOrder);
+    const targetUid = driveUser?.uid || resolveStoreId();
+    if (targetUid) {
+      syncPesananOnlineToCloud(targetUid, updatedOrder);
     }
 
     showToast(`✏️ Pesanan ${updatedOrder.id} berhasil diperbarui!`);
@@ -3992,8 +4018,9 @@ export default function App() {
     setPesananOnline(updatedList);
     localStorage.setItem('src_pesanan_online', JSON.stringify(updatedList));
 
-    if (driveUser) {
-      deletePesananOnlineFromCloud(driveUser.uid, orderId);
+    const targetUid = driveUser?.uid || resolveStoreId();
+    if (targetUid) {
+      deletePesananOnlineFromCloud(targetUid, orderId);
     }
 
     showToast(`🗑️ Pesanan ${orderId} berhasil dihapus!`);
@@ -4010,9 +4037,10 @@ export default function App() {
     setPesananOnline(updatedList);
     localStorage.setItem('src_pesanan_online', JSON.stringify(updatedList));
 
-    if (driveUser) {
+    const targetUid = driveUser?.uid || resolveStoreId();
+    if (targetUid) {
       toDelete.forEach(o => {
-        deletePesananOnlineFromCloud(driveUser.uid, o.id);
+        deletePesananOnlineFromCloud(targetUid, o.id);
       });
     }
 
@@ -4068,9 +4096,16 @@ export default function App() {
     saveTransaksi(updatedTxList);
 
     // 3. Mark order as 'Selesai' in pesananOnline list (preserving order history)
-    const updatedOnlineOrders = pesananOnline.map(o => o.id === order.id ? { ...o, status: 'Selesai' as const } : o);
+    const completedOrder: PesananOnline = { ...order, status: 'Selesai' };
+    const updatedOnlineOrders = pesananOnline.map(o => o.id === order.id ? completedOrder : o);
     setPesananOnline(updatedOnlineOrders);
     localStorage.setItem('src_pesanan_online', JSON.stringify(updatedOnlineOrders));
+
+    // CRITICAL: Sync 'Selesai' status immediately to Firestore Cloud so it never reverts back to pending!
+    const targetUid = driveUser?.uid || resolveStoreId();
+    if (targetUid) {
+      syncPesananOnlineToCloud(targetUid, completedOrder);
+    }
 
     try {
       playDeviceBeep(1200, 0.25);

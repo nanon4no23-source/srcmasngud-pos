@@ -496,7 +496,18 @@ export function matchMemberBarcode(memberId: string, inputBarcode: string): bool
   const iBar = (inputBarcode || '').trim();
   if (!mId || !iBar) return false;
   if (mId.toLowerCase() === iBar.toLowerCase()) return true;
-  return getEan8Digits(mId) === iBar;
+
+  const mIdClean = mId.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const iBarClean = iBar.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (mIdClean && iBarClean && mIdClean === iBarClean) return true;
+
+  const ean8 = getEan8Digits(mId);
+  if (ean8 === iBar || (iBarClean && ean8 === iBarClean)) return true;
+
+  const ean13 = getEan13Digits(mId);
+  if (ean13 && (ean13 === iBar || (iBarClean && ean13 === iBarClean))) return true;
+
+  return false;
 }
 
 export function getEan8Binary(ean8Code: string): string {

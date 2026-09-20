@@ -5,10 +5,19 @@ import {
   CheckCircle2, AlertCircle, MessageCircle, Trash2,
   ChevronRight, ChevronLeft, QrCode, CreditCard, DollarSign, Send, Info,
   User, UserCheck, Key, LogOut, ShieldCheck, Award, Clock, Package, ListOrdered,
-  Camera, Copy, Check, Sparkles, Tag, ArrowRight, ArrowUp
+  Camera, Copy, Check, Sparkles, Tag, ArrowRight, ArrowUp, Loader2, Cloud
 } from 'lucide-react';
 import CameraScanner from './CameraScanner';
 import { prepareSearchIndex, searchProductsByPrefix } from '../utils/searchHelper';
+import { 
+  resolveStoreId, 
+  listenToStoreForBuyer, 
+  submitBuyerOrder, 
+  registerBuyerMember, 
+  searchMemberInCloud,
+  normalizePhone
+} from '../utils/firestoreSync';
+import { matchMemberBarcode, getEan8Digits, getEan13Digits } from '../utils/printHelper';
 
 // Helper to format clean display ID Member (e.g. MBR-001)
 export const formatDisplayMemberId = (p: Pelanggan): string => {
@@ -31,18 +40,67 @@ interface CustomerOnlineStoreProps {
   onCloseStore?: () => void;
   isOwnerView?: boolean;
   existingOrders?: PesananOnline[];
+  storeId?: string;
 }
 
 export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
-  barang,
-  pelanggan = [],
-  config,
+  barang: initialBarang,
+  pelanggan: initialPelanggan = [],
+  config: initialConfig,
   onPlaceOrder,
   onRegisterMember,
   onCloseStore,
   isOwnerView = false,
   existingOrders = [],
+  storeId,
 }) => {
+  const activeStoreId = useMemo(() => storeId || resolveStoreId(), [storeId]);
+  const [cloudBarang, setCloudBarang] = useState<ItemBarang[]>(initialBarang);
+  const [cloudPelanggan, setCloudPelanggan] = useState<Pelanggan[]>(initialPelanggan);
+  const [cloudConfig, setCloudConfig] = useState<ConfigStruk>(initialConfig);
+  const [isCloudConnected, setIsCloudConnected] = useState<boolean>(false);
+  const [isSearchingCloudMember, setIsSearchingCloudMember] = useState<boolean>(false);
+
+  // Real-time Cloud Firestore Listener for public customer online store
+  useEffect(() => {
+    if (!activeStoreId) return;
+    const unsub = listenToStoreForBuyer(activeStoreId, {
+      onBarang: (items) => {
+        if (items && items.length > 0) {
+          setCloudBarang(items);
+        }
+        setIsCloudConnected(true);
+      },
+      onPelanggan: (members) => {
+        if (members && members.length > 0) {
+          setCloudPelanggan(members);
+        }
+        setIsCloudConnected(true);
+      },
+      onSettings: (data) => {
+        if (data?.config) {
+          setCloudConfig(prev => ({ ...prev, ...data.config }));
+        }
+      }
+    });
+    return () => unsub();
+  }, [activeStoreId]);
+
+  useEffect(() => {
+    if (initialBarang && initialBarang.length > 0 && cloudBarang.length === 0) {
+      setCloudBarang(initialBarang);
+    }
+  }, [initialBarang]);
+
+  useEffect(() => {
+    if (initialPelanggan && initialPelanggan.length > 0 && cloudPelanggan.length === 0) {
+      setCloudPelanggan(initialPelanggan);
+    }
+  }, [initialPelanggan]);
+
+  const barang = cloudBarang.length > 0 ? cloudBarang : initialBarang;
+  const pelanggan = cloudPelanggan.length > 0 ? cloudPelanggan : initialPelanggan;
+  const config = cloudConfig || initialConfig;
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Semua');
   const [zoomedImage, setZoomedImage] = useState<{ url: string; title: string } | null>(null);
@@ -211,75 +269,85 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
     return clean;
   };
 
-  // Helper function to search for member in database by Phone, ID, or Name
+  // Helper function to search for member in database by Barcode, Phone, ID, or Name
   const findMember = (query: string): Pelanggan | null => {
     if (!query || !query.trim()) return null;
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
+    const qLow = q.toLowerCase();
+    const cleanQ = qLow.replace(/[^a-z0-9]/g, '');
     const cleanQueryPhone = normalizePhone(q);
 
-    // 1. Match by Member ID (exact, lowercase, display formatted ID, or clean alphanumeric)
+    // 0. Match by Barcode / QR Code (EAN-8 / EAN-13 / matchMemberBarcode)
     let match = pelanggan.find(p => {
-      const pIdLow = p.id.toLowerCase();
-      const pIdClean = pIdLow.replace(/[^a-z0-9]/g, '');
-      const qClean = q.replace(/[^a-z0-9]/g, '');
-      const displayId = formatDisplayMemberId(p).toLowerCase();
-      const displayClean = displayId.replace(/[^a-z0-9]/g, '');
-
-      return pIdLow === q || 
-             (qClean && pIdClean === qClean) || 
-             pIdLow.endsWith(q) ||
-             displayId === q ||
-             (qClean && displayClean === qClean) ||
-             displayId.endsWith(q);
+      const pId = p.id || '';
+      if (matchMemberBarcode(pId, q)) return true;
+      if (getEan8Digits(pId) === q || (cleanQ && getEan8Digits(pId) === cleanQ)) return true;
+      if (getEan13Digits(pId) === q || (cleanQ && getEan13Digits(pId) === cleanQ)) return true;
+      return false;
     });
     if (match) return match;
 
-    // 2. Match by Phone Number (normalized exact or contains)
-    if (cleanQueryPhone.length >= 3) {
+    // 1. Match by Member ID (exact, lowercase, display formatted ID, or clean alphanumeric)
+    match = pelanggan.find(p => {
+      const pIdLow = (p.id || '').toLowerCase();
+      const pIdClean = pIdLow.replace(/[^a-z0-9]/g, '');
+      const displayId = formatDisplayMemberId(p).toLowerCase();
+      const displayClean = displayId.replace(/[^a-z0-9]/g, '');
+
+      return pIdLow === qLow || 
+             (cleanQ && pIdClean === cleanQ) || 
+             displayId === qLow ||
+             (cleanQ && displayClean === cleanQ);
+    });
+    if (match) return match;
+
+    // 2. Match by Phone Number (normalized exact - ONLY if both query and member phone have >= 8 digits)
+    if (cleanQueryPhone.length >= 8) {
       match = pelanggan.find(p => {
-        const pPhoneNorm = normalizePhone(p.telepon);
-        return pPhoneNorm === cleanQueryPhone || 
-               (cleanQueryPhone.length >= 4 && pPhoneNorm.includes(cleanQueryPhone)) || 
-               (pPhoneNorm.length >= 4 && cleanQueryPhone.includes(pPhoneNorm));
+        const pPhoneNorm = normalizePhone(p.telepon || '');
+        return pPhoneNorm.length >= 8 && (
+          pPhoneNorm === cleanQueryPhone || 
+          pPhoneNorm.endsWith(cleanQueryPhone) || 
+          cleanQueryPhone.endsWith(pPhoneNorm)
+        );
       });
       if (match) return match;
     }
 
-    // 3. Match by Name (case insensitive substring or exact)
-    match = pelanggan.find(p => {
-      const pNameLow = p.nama.toLowerCase();
-      return pNameLow === q || pNameLow.includes(q) || q.includes(pNameLow);
-    });
-    if (match) return match;
+    // 3. Match by Name (case insensitive exact or substring, ONLY if query is not purely numeric and has >= 3 chars)
+    if (qLow.length >= 3 && !/^\d+$/.test(cleanQ)) {
+      match = pelanggan.find(p => {
+        const pNameLow = (p.nama || '').toLowerCase().trim();
+        return pNameLow === qLow || pNameLow.includes(qLow);
+      });
+      if (match) return match;
+    }
 
     return null;
   };
 
-  // Live suggestions while typing in login modal
-  const matchingMembersList = useMemo(() => {
-    if (!memberInput || memberInput.trim().length < 1) return [];
-    const q = memberInput.trim().toLowerCase();
-    const cleanQ = q.replace(/[^a-z0-9]/g, '');
-    const cleanPhone = normalizePhone(q);
-
-    return pelanggan.filter(p => {
-      const pIdLow = p.id.toLowerCase();
-      const pIdClean = pIdLow.replace(/[^a-z0-9]/g, '');
-      const pPhoneNorm = normalizePhone(p.telepon);
-      const pNameLow = p.nama.toLowerCase();
-      const displayId = formatDisplayMemberId(p).toLowerCase();
-
-      const matchId = pIdLow.includes(q) || (cleanQ && pIdClean.includes(cleanQ)) || displayId.includes(q);
-      const matchPhone = cleanPhone.length >= 2 && pPhoneNorm.includes(cleanPhone);
-      const matchName = pNameLow.includes(q);
-
-      return matchId || matchPhone || matchName;
-    }).slice(0, 5);
-  }, [memberInput, pelanggan]);
-
-  const handleMemberLoginSubmit = (e?: React.FormEvent, selectedMember?: Pelanggan) => {
+  const handleMemberLoginSubmit = async (e?: React.FormEvent, selectedMember?: Pelanggan) => {
     if (e) e.preventDefault();
-    const target = selectedMember || findMember(memberInput);
+    let target = selectedMember || findMember(memberInput);
+
+    if (!target && memberInput.trim()) {
+      setIsSearchingCloudMember(true);
+      try {
+        target = await searchMemberInCloud(activeStoreId, memberInput);
+        if (target) {
+          setCloudPelanggan(prev => {
+            if (!prev.some(p => p.id === target!.id)) {
+              return [...prev, target!];
+            }
+            return prev;
+          });
+        }
+      } catch (err) {
+        console.warn('Error searching member in cloud:', err);
+      } finally {
+        setIsSearchingCloudMember(false);
+      }
+    }
 
     if (target) {
       setLoggedInMember(target);
@@ -290,7 +358,7 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
       setMemberLoginError(null);
       setMemberInput('');
     } else {
-      setMemberLoginError(`Nomor HP / ID / Nama "${memberInput}" belum terdaftar. Silakan gunakan tab "Daftar Member Baru" untuk membuat akun.`);
+      setMemberLoginError(`Nomor HP / ID / Barcode / Nama "${memberInput}" tidak ditemukan di data toko. Silakan gunakan tab "Daftar Member Baru" untuk membuat akun.`);
     }
   };
 
@@ -339,10 +407,13 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
     setCustomerName(newMember.nama);
     setCustomerPhone(newMember.telepon);
     localStorage.setItem('src_online_member_session', JSON.stringify(newMember));
+    setCloudPelanggan(prev => [...prev.filter(p => p.id !== newMember.id), newMember]);
 
     if (onRegisterMember) {
       onRegisterMember(newMember);
     }
+    // Directly persist to cloud Firestore
+    registerBuyerMember(activeStoreId, newMember);
 
     setIsMemberModalOpen(false);
     setMemberLoginError(null);
@@ -356,6 +427,10 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
     localStorage.removeItem('src_online_member_session');
     setCustomerName('');
     setCustomerPhone('');
+    setCartItems({});
+    setCustomerAddress('');
+    setOrderNotes('');
+    setPlacedOrder(null);
     setIsMemberModalOpen(true);
   };
   
@@ -508,6 +583,21 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
 
     const combinedOrders = Array.from(orderMap.values());
 
+    // If a member is logged in, restrict orders view to only orders placed by this member
+    let finalOrders = combinedOrders;
+    if (loggedInMember) {
+      finalOrders = combinedOrders.filter(o => {
+        const matchName = cleanMemberName && o.namaPembeli && o.namaPembeli.toLowerCase().trim() === cleanMemberName;
+        const cleanOrderPhone = o.teleponPembeli ? normalizePhone(o.teleponPembeli) : '';
+        const matchPhone = cleanMemberPhone.length >= 8 && cleanOrderPhone.length >= 8 && (
+          cleanOrderPhone === cleanMemberPhone || 
+          cleanOrderPhone.endsWith(cleanMemberPhone) || 
+          cleanMemberPhone.endsWith(cleanOrderPhone)
+        );
+        return matchName || matchPhone;
+      });
+    }
+
     // Update localPlacedOrders back to localStorage if status updated
     if (typeof window !== 'undefined' && localOrderIds.length > 0) {
       try {
@@ -516,7 +606,7 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
       } catch (e) {}
     }
 
-    return combinedOrders.sort((a, b) => b.timestamp - a.timestamp);
+    return finalOrders.sort((a, b) => b.timestamp - a.timestamp);
   }, [existingOrders, allStoreOrders, loggedInMember, customerPhone, localHistoryVersion]);
 
   const activeBuyerOrders = useMemo(() => {
@@ -762,6 +852,9 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
 
     onPlaceOrder(newOrder);
     setPlacedOrder(newOrder);
+
+    // Directly push order to Firestore Cloud database so Cashier APK receives it instantly
+    submitBuyerOrder(activeStoreId, newOrder);
 
     if (typeof window !== 'undefined') {
       try {
@@ -2104,9 +2197,22 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
               </div>
             )}
 
-            {/* TAB 1: LOGIN (KAMERA SCAN BARCODE MEMBER UNTUK KEAMANAN) */}
+            {/* TAB 1: LOGIN (KAMERA SCAN BARCODE KARTU FISIK UNTUK PRIVASI & KEAMANAN) */}
             {memberModalTab === 'login' ? (
               <div className="space-y-4">
+                {/* CLOUD CONNECTION STATUS BADGE */}
+                <div className="flex items-center justify-between px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-[11px]">
+                  <span className="text-slate-500 font-semibold flex items-center gap-1.5">
+                    <Cloud className="w-3.5 h-3.5 text-red-600" />
+                    <span>Database Cloud Toko</span>
+                  </span>
+                  <span className="flex items-center gap-1 font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full text-[10px]">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    Tersambung
+                  </span>
+                </div>
+
+                {/* CAMERA SCANNER */}
                 <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-center space-y-3">
                   <div className="w-14 h-14 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-xs">
                     <QrCode className="w-8 h-8" />
@@ -2116,7 +2222,7 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
                       Verifikasi Scan Fisik / QR Kartu
                     </h4>
                     <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
-                      Untuk menjaga keamanan data dan poin belanja Anda, akses masuk member diwajibkan menggunakan pemindaian Barcode atau QR Code pada Kartu Member terdaftar.
+                      Arahkan kamera ke Barcode atau QR Code pada Kartu Member fisik Anda untuk masuk dan cek poin belanja.
                     </p>
                   </div>
 
@@ -2133,10 +2239,11 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
                   </button>
                 </div>
 
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2 text-left text-amber-900">
-                  <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                {/* PRIVACY PROTECTION BADGE */}
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-start gap-2 text-left text-emerald-900">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                   <p className="text-[11px] leading-relaxed">
-                    <strong>Keamanan Terjaga:</strong> Tidak ada yang dapat menyalahgunakan atau memasukkan nomor HP / ID Anda sembarangan tanpa memegang kartu fisik member asli.
+                    <strong>Privasi Member Terlindungi:</strong> Kolom pencarian publik dinonaktifkan demi menjaga kerahasiaan nomor WhatsApp dan data pribadi pelanggan. Akses login hanya dapat dibuka dengan memindai kartu fisik asli milik Anda.
                   </p>
                 </div>
 
@@ -2337,13 +2444,35 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
 
             <div className="overflow-hidden rounded-2xl border-2 border-dashed border-red-300 bg-slate-950 min-h-[220px]">
               <CameraScanner
-                onScanSuccess={(code) => {
+                onScanSuccess={async (code) => {
                   setIsMemberCardScannerOpen(false);
-                  const matched = findMember(code);
+                  const cleanCode = (code || '').trim();
+                  if (!cleanCode) return;
+
+                  let matched = findMember(cleanCode);
+                  if (!matched) {
+                    setIsSearchingCloudMember(true);
+                    try {
+                      matched = await searchMemberInCloud(activeStoreId, cleanCode);
+                      if (matched) {
+                        setCloudPelanggan(prev => {
+                          if (!prev.some(p => p.id === matched!.id)) {
+                            return [...prev, matched!];
+                          }
+                          return prev;
+                        });
+                      }
+                    } catch (e) {
+                      console.warn(e);
+                    } finally {
+                      setIsSearchingCloudMember(false);
+                    }
+                  }
+
                   if (matched) {
                     handleMemberLoginSubmit(undefined, matched);
                   } else {
-                    setMemberLoginError(`Barcod/QR "${code}" tidak terdaftar sebagai member toko.`);
+                    setMemberLoginError(`Barcode/QR "${cleanCode}" tidak terdaftar di database cloud toko.`);
                     setIsMemberModalOpen(true);
                   }
                 }}

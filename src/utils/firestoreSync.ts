@@ -13,11 +13,26 @@ import {
 } from 'firebase/firestore';
 import { ItemBarang, Pelanggan, Transaksi, PesananOnline } from '../types';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { matchMemberBarcode, getEan8Digits, getEan13Digits } from './printHelper';
 
 // Reuse existing Firebase app instances if available
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
+
+/**
+ * Deep sanitization function to strip any `undefined` properties from objects
+ * before sending to Firestore, preventing "Unsupported field value: undefined" errors.
+ */
+export const sanitizeForFirestore = <T>(obj: T): T => {
+  if (obj === undefined || obj === null) return obj;
+  if (typeof obj !== 'object') return obj;
+  try {
+    return JSON.parse(JSON.stringify(obj, (_, value) => (value === undefined ? null : value)));
+  } catch {
+    return obj;
+  }
+};
 
 export enum OperationType {
   CREATE = 'create',
@@ -68,7 +83,7 @@ export const syncBarangToCloud = async (uid: string, item: ItemBarang) => {
   const path = `users/${uid}/barang/${item.id}`;
   try {
     const docRef = doc(db, `users/${uid}/barang`, item.id);
-    await setDoc(docRef, item);
+    await setDoc(docRef, sanitizeForFirestore(item));
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -94,7 +109,7 @@ export const syncPelangganToCloud = async (uid: string, p: Pelanggan) => {
   const path = `users/${uid}/pelanggan/${p.id}`;
   try {
     const docRef = doc(db, `users/${uid}/pelanggan`, p.id);
-    await setDoc(docRef, p);
+    await setDoc(docRef, sanitizeForFirestore(p));
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -120,7 +135,7 @@ export const syncTransaksiToCloud = async (uid: string, tx: Transaksi) => {
   const path = `users/${uid}/transaksi/${tx.id}`;
   try {
     const docRef = doc(db, `users/${uid}/transaksi`, tx.id);
-    await setDoc(docRef, tx);
+    await setDoc(docRef, sanitizeForFirestore(tx));
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -146,7 +161,7 @@ export const syncPesananOnlineToCloud = async (uid: string, order: PesananOnline
   const path = `users/${uid}/pesanan_online/${order.id}`;
   try {
     const docRef = doc(db, `users/${uid}/pesanan_online`, order.id);
-    await setDoc(docRef, order);
+    await setDoc(docRef, sanitizeForFirestore(order));
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -179,17 +194,17 @@ export const initializeCloudDatabase = async (
 
     payload.barang.forEach((item) => {
       const ref = doc(db, `users/${uid}/barang`, item.id);
-      operations.push({ ref, data: item });
+      operations.push({ ref, data: sanitizeForFirestore(item) });
     });
 
     payload.pelanggan.forEach((p) => {
       const ref = doc(db, `users/${uid}/pelanggan`, p.id);
-      operations.push({ ref, data: p });
+      operations.push({ ref, data: sanitizeForFirestore(p) });
     });
 
     payload.transaksi.forEach((tx) => {
       const ref = doc(db, `users/${uid}/transaksi`, tx.id);
-      operations.push({ ref, data: tx });
+      operations.push({ ref, data: sanitizeForFirestore(tx) });
     });
 
     // Firestore batch writes are limited to 500 documents per batch.
@@ -397,7 +412,7 @@ export const syncDeletedIdsToCloud = async (
   const path = `users/${uid}/metadata/deleted_ids`;
   try {
     const docRef = doc(db, `users/${uid}/metadata`, 'deleted_ids');
-    await setDoc(docRef, deletedIds);
+    await setDoc(docRef, sanitizeForFirestore(deletedIds));
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -432,7 +447,7 @@ export const syncSettingsToCloud = async (
   const path = `users/${uid}`;
   try {
     const docRef = doc(db, 'users', uid);
-    await setDoc(docRef, payload, { merge: true });
+    await setDoc(docRef, sanitizeForFirestore(payload), { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -532,4 +547,210 @@ export const logoutStoreAccount = () => {
     localStorage.removeItem('cfg_firestore_sync');
   }
 };
+
+/**
+ * Standardize phone string for member matching (e.g. 628 -> 08, 8 -> 08)
+ */
+export const normalizePhone = (phoneStr: string): string => {
+  if (!phoneStr) return '';
+  let clean = phoneStr.replace(/[^0-9]/g, '');
+  if (clean.startsWith('62')) clean = '0' + clean.slice(2);
+  else if (clean.startsWith('8')) clean = '0' + clean;
+  return clean;
+};
+
+/**
+ * Intelligently resolve the target store ID from URL parameter (?store=...),
+ * local storage of active store, or fallback to the primary store (store_nanon4no23_gmail_com).
+ */
+export const resolveStoreId = (): string => {
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search);
+    const fromParam = params.get('store') || params.get('storeId') || params.get('toko');
+    if (fromParam && fromParam.trim()) return fromParam.trim();
+
+    if (window.location.hash) {
+      const hash = window.location.hash.replace(/^#/, '');
+      if (hash.includes('store=')) {
+        const hashParams = new URLSearchParams(hash.includes('?') ? hash.split('?')[1] : hash);
+        const fromHash = hashParams.get('store') || hashParams.get('storeId') || hashParams.get('toko');
+        if (fromHash && fromHash.trim()) return fromHash.trim();
+      }
+    }
+
+    const storedUser = getStoredStoreAccount();
+    if (storedUser?.uid) return storedUser.uid;
+
+    const lastStore = localStorage.getItem('src_active_store_id');
+    if (lastStore && lastStore.trim()) return lastStore.trim();
+  }
+  // Default fallback to primary store: SRC MASNGUD
+  return 'store_nanon4no23_gmail_com';
+};
+
+/**
+ * Real-time listener for public buyer portal (CustomerOnlineStore)
+ * Subscribes directly to the cloud store's barang, pelanggan, and settings
+ */
+export const listenToStoreForBuyer = (
+  storeId: string,
+  callbacks: {
+    onBarang?: (items: ItemBarang[]) => void;
+    onPelanggan?: (members: Pelanggan[]) => void;
+    onSettings?: (settings: any) => void;
+  }
+) => {
+  const targetStore = storeId || resolveStoreId();
+  if (!targetStore) return () => {};
+
+  const unsubBarang = callbacks.onBarang
+    ? onSnapshot(
+        collection(db, `users/${targetStore}/barang`),
+        (snap) => {
+          const list: ItemBarang[] = [];
+          snap.forEach((docSnap) => {
+            list.push(docSnap.data() as ItemBarang);
+          });
+          callbacks.onBarang!(list);
+        },
+        (err) => console.warn('Buyer store barang snapshot notice:', err)
+      )
+    : () => {};
+
+  const unsubPelanggan = callbacks.onPelanggan
+    ? onSnapshot(
+        collection(db, `users/${targetStore}/pelanggan`),
+        (snap) => {
+          const list: Pelanggan[] = [];
+          snap.forEach((docSnap) => {
+            list.push(docSnap.data() as Pelanggan);
+          });
+          callbacks.onPelanggan!(list);
+        },
+        (err) => console.warn('Buyer store pelanggan snapshot notice:', err)
+      )
+    : () => {};
+
+  const unsubSettings = callbacks.onSettings
+    ? onSnapshot(
+        doc(db, 'users', targetStore),
+        (docSnap) => {
+          if (docSnap.exists()) {
+            callbacks.onSettings!(docSnap.data());
+          }
+        },
+        (err) => console.warn('Buyer store settings snapshot notice:', err)
+      )
+    : () => {};
+
+  return () => {
+    unsubBarang();
+    unsubPelanggan();
+    unsubSettings();
+  };
+};
+
+/**
+ * Submit an online order directly to the store's cloud database from customer device
+ */
+export const submitBuyerOrder = async (storeId: string, order: PesananOnline): Promise<boolean> => {
+  const targetId = storeId || resolveStoreId();
+  const path = `users/${targetId}/pesanan_online/${order.id}`;
+  try {
+    const docRef = doc(db, `users/${targetId}/pesanan_online`, order.id);
+    await setDoc(docRef, sanitizeForFirestore(order));
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+    return false;
+  }
+};
+
+/**
+ * Register or update a member directly in the store's cloud database from customer device
+ */
+export const registerBuyerMember = async (storeId: string, member: Pelanggan): Promise<boolean> => {
+  const targetId = storeId || resolveStoreId();
+  const path = `users/${targetId}/pelanggan/${member.id}`;
+  try {
+    const docRef = doc(db, `users/${targetId}/pelanggan`, member.id);
+    await setDoc(docRef, sanitizeForFirestore(member));
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+    return false;
+  }
+};
+
+/**
+ * Live search for a member directly in the cloud (prioritizes exact barcode / ID first, then phone, then name)
+ */
+export const searchMemberInCloud = async (storeId: string, query: string): Promise<Pelanggan | null> => {
+  if (!query || !query.trim()) return null;
+  const targetId = storeId || resolveStoreId();
+  const q = query.trim();
+  const qLow = q.toLowerCase();
+  const qClean = q.replace(/[^a-z0-9]/g, '');
+  const qPhone = normalizePhone(q);
+
+  try {
+    const snap = await getDocs(collection(db, `users/${targetId}/pelanggan`));
+    const members: Pelanggan[] = snap.docs.map(docSnap => {
+      const data = docSnap.data() as Pelanggan;
+      return {
+        ...data,
+        id: (data.id || docSnap.id).trim()
+      };
+    });
+
+    // PASS 1: Strict Barcode / QR / Member ID match across ALL members first!
+    for (const p of members) {
+      const pId = p.id;
+      const pIdLow = pId.toLowerCase();
+      const pIdClean = pIdLow.replace(/[^a-z0-9]/g, '');
+
+      if (matchMemberBarcode(pId, q)) return p;
+      if (getEan8Digits(pId) === q || (qClean && getEan8Digits(pId) === qClean)) return p;
+      if (getEan13Digits(pId) === q || (qClean && getEan13Digits(pId) === qClean)) return p;
+      if (pIdLow === qLow || (qClean && pIdClean === qClean)) return p;
+
+      // Display formatted ID comparison (e.g. MBR-...)
+      const displayId = pId.toLowerCase().startsWith('mbr-') 
+        ? pIdLow 
+        : (pId.toLowerCase().startsWith('pel-') 
+          ? `mbr-${pId.replace(/[^0-9]/g, '').slice(-4)}` 
+          : `mbr-${pIdLow}`);
+      const displayClean = displayId.replace(/[^a-z0-9]/g, '');
+      if (displayId === qLow || (qClean && displayClean === qClean)) return p;
+    }
+
+    // PASS 2: Phone number match (ONLY if both query and member phone have >= 8 digits!)
+    if (qPhone.length >= 8) {
+      for (const p of members) {
+        const pPhone = normalizePhone(p.telepon || '');
+        if (pPhone.length >= 8 && (
+          pPhone === qPhone || 
+          pPhone.endsWith(qPhone) || 
+          qPhone.endsWith(pPhone)
+        )) {
+          return p;
+        }
+      }
+    }
+
+    // PASS 3: Name exact or contains (ONLY if query is not purely numeric and has >= 3 characters)
+    if (qLow.length >= 3 && !/^\d+$/.test(qClean)) {
+      for (const p of members) {
+        const pNameLow = (p.nama || '').toLowerCase().trim();
+        if (pNameLow && (pNameLow === qLow || pNameLow.includes(qLow))) {
+          return p;
+        }
+      }
+    }
+  } catch (error) {
+    console.warn("Failed to search member in cloud:", error);
+  }
+  return null;
+};
+
 

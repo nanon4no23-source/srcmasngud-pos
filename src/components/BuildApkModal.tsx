@@ -82,7 +82,7 @@ export const BuildApkModal: React.FC<BuildApkModalProps> = ({
     try {
       const res = await downloadRemoteFileBlob(
         '/apkv2.0.zip',
-        'srcmasngud-kasir-v3.0.zip',
+        'srcmasngud-kasir-v3.3.zip',
         'application/zip'
       );
       onToast(res.message);
@@ -115,10 +115,10 @@ export const BuildApkModal: React.FC<BuildApkModalProps> = ({
             <div>
               <h3 className="text-base font-black uppercase tracking-wide flex items-center gap-2">
                 <span>Pusat Unduh APK &amp; build-apk.yml</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 font-extrabold border border-emerald-500/30">v3.2</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 font-extrabold border border-emerald-500/30">v3.3</span>
               </h3>
               <p className="text-xs text-slate-500 dark:text-zinc-400">
-                Unduh ZIP proyek atau salin skrip alur kerja otomatis GitHub Actions
+                Mendukung instalasi di Kartu Memori Eksternal SD &amp; skrip alur kerja otomatis GitHub Actions
               </p>
             </div>
           </div>
@@ -247,7 +247,7 @@ export const BuildApkModal: React.FC<BuildApkModalProps> = ({
                     <strong>Buat File Alur Kerja:</strong> Di repositori GitHub, buat berkas baru dengan path persis: <code className="bg-indigo-100 px-1 py-0.5 rounded font-mono font-bold">.github/workflows/build-apk.yml</code>, lalu tempel (paste) skrip di atas.
                   </li>
                   <li>
-                    <strong>APK Selesai Otomatis:</strong> Buka tab <strong>Actions</strong> di GitHub, klik alur kerja tersebut. Dalam 2-4 menit APK otomatis jadi dan bisa diunduh di bagian <strong>Artifacts</strong> (<code className="bg-indigo-100 px-1 py-0.5 rounded font-mono">srcmasngud-kasir-v3.2.apk</code>).
+                    <strong>APK Selesai Otomatis:</strong> Buka tab <strong>Actions</strong> di GitHub, klik alur kerja tersebut. Dalam 2-4 menit APK otomatis jadi dan bisa diunduh di bagian <strong>Artifacts</strong> (<code className="bg-indigo-100 px-1 py-0.5 rounded font-mono">srcmasngud-kasir-v3.3.apk</code>).
                   </li>
                 </ol>
               </div>

@@ -2824,12 +2824,13 @@ export default function App() {
     const checkAndInitMerge = async () => {
       try {
         setIsDriveLoading(true);
-        // Timeout guard: if sync check takes more than 8 seconds, cancel loading state
+        // Timeout guard: if sync check takes more than 10 seconds, cancel loading state
         timeoutId = setTimeout(() => {
           if (active) {
             setIsDriveLoading(false);
+            setIsInitialMergeDone(true);
           }
-        }, 8000);
+        }, 10000);
 
         const cloudData = await fetchCloudDatabase(driveUser.uid);
         if (timeoutId) clearTimeout(timeoutId);
@@ -2844,7 +2845,16 @@ export default function App() {
         const currentTransaksi = transaksiRef.current;
         const currentConfig = configRef.current;
         
-        if (!cloudData || (cloudData.barang.length === 0 && cloudData.pelanggan.length === 0 && cloudData.transaksi.length === 0)) {
+        if (!cloudData) {
+          // Cloud connection timed out or failed; safely continue with local database
+          if (active) {
+            setIsInitialMergeDone(true);
+            showToast("ℹ️ Menggunakan database lokal (koneksi cloud dialihkan sementara).");
+          }
+          return;
+        }
+
+        if (cloudData.barang.length === 0 && cloudData.pelanggan.length === 0 && cloudData.transaksi.length === 0) {
           // Cloud is empty, safely populate it with local phone master data
           await initializeCloudDatabase(driveUser.uid, { barang: currentBarang, pelanggan: currentPelanggan, transaksi: currentTransaksi });
           await syncSettingsToCloud(driveUser.uid, { config: currentConfig, minBelanja: minBelanjaRef.current, nilaiPoin: nilaiPoinRef.current });
@@ -2971,6 +2981,7 @@ export default function App() {
       } catch (err: any) {
         if (active) {
           showToast(`❌ Gagal menyelaraskan database awan: ${err?.message || err}`);
+          setIsInitialMergeDone(true);
         }
       } finally {
         if (timeoutId) clearTimeout(timeoutId);
@@ -3601,6 +3612,9 @@ export default function App() {
       setDriveUser(null);
       setDriveToken(null);
       setIsFirestoreSync(false);
+      setIsInitialMergeDone(false);
+      setPendingCloudData(null);
+      setShowMergeModal(false);
       localStorage.removeItem('cfg_firestore_sync');
       showToast("👋 Terputus dari Akun Cloud Toko.");
     } catch (err: any) {
@@ -13031,145 +13045,6 @@ export default function App() {
                 );
               })()}
 
-
-
-
-              {/* VIRTUAL THERMAL RECEIPT PRINTER EMULATOR */}
-              <AnimatePresence mode="wait">
-                {currentReceiptText && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 30, scale: 0.98 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 20, scale: 0.98 }}
-                    transition={{ type: "spring", stiffness: 300, damping: 25 }}
-                    className="bg-white border border-slate-200 p-4 rounded-xl shadow-sm space-y-3"
-                  >
-                    <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                      <h3 className="font-bold text-xs text-slate-600 uppercase tracking-wider flex items-center gap-1">
-                        <Receipt className="w-4 h-4 text-red-500" />
-                        <span>Struk Terakhir Terbentuk</span>
-                      </h3>
-                      <button
-                        onClick={() => setShowSimulator(!showSimulator)}
-                        className="text-[10px] text-red-600 font-bold hover:underline cursor-pointer"
-                      >
-                        {showSimulator ? 'Sembunyikan' : 'Tampilkan Simulator'}
-                      </button>
-                    </div>
-
-                    <AnimatePresence initial={false}>
-                      {showSimulator && (
-                        <motion.div
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: "auto", opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                          className="overflow-hidden space-y-4"
-                        >
-                          <div className="pt-2">
-                            {/* VINTAGE PAPER CONTAINER ROLL */}
-                            <motion.div
-                              initial={{ scaleY: 0, originY: 0, opacity: 0 }}
-                              animate={{ scaleY: 1, originY: 0, opacity: 1 }}
-                              exit={{ scaleY: 0, originY: 0, opacity: 0 }}
-                              transition={{ type: "spring", stiffness: 220, damping: 24 }}
-                              className="relative bg-[#FAFAFA] border-x border-t border-slate-300 rounded-t-lg shadow-inner overflow-hidden select-all max-w-sm mx-auto"
-                            >
-                              
-                              {/* Feed roll paper glow */}
-                              <div className="absolute top-0 inset-x-0 h-4 bg-gradient-to-b from-slate-200/50 to-transparent pointer-events-none" />
-
-                              {/* Printed text payload aligned perfectly */}
-                              <motion.div
-                                animate={isSimulatingPrint ? {
-                                  y: [0, 1.5, 0, -1, 1, 0],
-                                  x: [0, -0.5, 0.5, -0.5, 0.5, 0],
-                                } : {
-                                  y: 0,
-                                  x: 0,
-                                }}
-                                transition={isSimulatingPrint ? {
-                                  repeat: Infinity,
-                                  duration: 0.15,
-                                  ease: "easeInOut",
-                                } : {
-                                  duration: 0.2,
-                                }}
-                                className={`p-4 md:p-6 font-mono text-[11px] leading-relaxed tracking-wider text-[#1a1b1c] ${
-                                  isSimulatingPrint ? 'animate-pulse' : ''
-                                }`}
-                              >
-                                {config.logoUseImage && (
-                                  <div className="flex flex-col items-center mb-3 border-b border-dashed border-slate-350 pb-2.5">
-                                    <img 
-                                      src={getLogoUrl(config.logoImageUrl || (localStorage.getItem('cfg_custom_default_logo') || '/default_logo.jpg'))} 
-                                      alt="Logo Toko" 
-                                      className="w-14 h-14 object-contain rounded-md" 
-                                      referrerPolicy="no-referrer"
-                                      onError={(e) => {
-                                        (e.target as HTMLImageElement).src = '/default_logo.jpg?v=20';
-                                      }}
-                                    />
-                                  </div>
-                                )}
-                                <pre className="whitespace-pre-wrap font-mono font-medium">
-                                  {(() => {
-                                    if (config.logoUseImage && currentReceiptText) {
-                                      const lines = currentReceiptText.split("\n");
-                                      const storeNameUpper = config.namaToko.trim().toUpperCase();
-                                      let firstLineToKeep = 0;
-                                      for (let i = 0; i < Math.min(lines.length, 3); i++) {
-                                        const lineTrimmed = lines[i].trim().toUpperCase();
-                                        if (lineTrimmed === storeNameUpper || lineTrimmed.includes(storeNameUpper) || (storeNameUpper.length > 3 && lineTrimmed.includes(storeNameUpper))) {
-                                          firstLineToKeep = i + 1;
-                                          break;
-                                        }
-                                      }
-                                      return lines.slice(firstLineToKeep).join("\n");
-                                    }
-                                    return currentReceiptText;
-                                  })()}
-                                </pre>
-                              </motion.div>
-
-                              {/* Bottom jagged serrations for perfect paper tear look */}
-                              <div className="w-full flex h-2 pointer-events-none select-none">
-                                {Array.from({ length: 32 }).map((_, i) => (
-                                  <div key={i} className="flex-1 bg-[#FAFAFA] relative">
-                                    <div className="absolute left-1/2 -top-1 w-2.5 h-2.5 bg-slate-200 rotate-45 border-l border-t border-slate-300/40 transform -translate-x-1/2" />
-                                  </div>
-                                ))}
-                              </div>
-                            </motion.div>
-                          </div>
-
-                          {/* UTILITIES FOR RE-PRINT PAYLOADS */}
-                          <div className="flex flex-col sm:flex-row gap-2 justify-center max-w-sm mx-auto">
-                            <button
-                              onClick={() => handleNativeBrowserPrint(currentReceiptText)}
-                              className="flex-1 py-2 px-3 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer animate-in fade-in slide-in-from-bottom-2 duration-300"
-                            >
-                              <Printer className="w-3.5 h-3.5" />
-                              <span>Cetak Kertas/PDF</span>
-                            </button>
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText(currentReceiptText);
-                                showToast("Salin teks struk klickboard!");
-                              }}
-                              className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1 border border-slate-300 cursor-pointer animate-in fade-in slide-in-from-bottom-2 duration-300 delay-75"
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                              <span>Salin Teks</span>
-                            </button>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
             </div>
 
             </div>
@@ -20870,10 +20745,21 @@ export default function App() {
               {/* CLOUD STORAGE & MULTI-HP SYNC */}
               <div className="bg-gradient-to-br from-indigo-50/60 via-blue-50/50 to-slate-50 border border-indigo-150 p-4 rounded-2xl space-y-3.5 shadow-sm relative overflow-hidden">
                 {isDriveLoading && (
-                  <div className="absolute inset-0 bg-white/70 backdrop-blur-[2px] flex items-center justify-center z-20">
-                    <div className="flex flex-col items-center gap-2">
-                      <div className="animate-spin rounded-full h-6 w-6 border-2 border-indigo-600 border-t-transparent"></div>
-                      <span className="text-[10px] font-bold text-indigo-900">Menghubungkan ke Cloud...</span>
+                  <div className="absolute inset-0 bg-white/90 backdrop-blur-[2px] flex items-center justify-center z-20 p-4">
+                    <div className="flex flex-col items-center gap-2.5 bg-white p-4 rounded-2xl shadow-xl border border-indigo-100 max-w-xs text-center">
+                      <div className="animate-spin rounded-full h-7 w-7 border-2 border-indigo-600 border-t-transparent"></div>
+                      <span className="text-xs font-bold text-indigo-950">Menghubungkan ke Cloud...</span>
+                      <p className="text-[10px] text-slate-500 leading-tight">Menyelaraskan data toko dengan Firebase Cloud</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsDriveLoading(false);
+                          setIsInitialMergeDone(true);
+                        }}
+                        className="mt-1 px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-[10px] font-bold cursor-pointer transition-colors"
+                      >
+                        Batalkan / Lanjutkan Offline
+                      </button>
                     </div>
                   </div>
                 )}
@@ -21270,8 +21156,8 @@ export default function App() {
                     <button
                       type="button"
                       onClick={async () => {
-                        showToast("⏳ Mempersiapkan berkas ZIP proyek...");
-                        const res = await downloadRemoteFileBlob('/apkv2.0.zip', 'srcmasngud-kasir-v3.0.zip', 'application/zip');
+                        showToast("⏳ Mempersiapkan berkas ZIP proyek v3.3...");
+                        const res = await downloadRemoteFileBlob('/apkv2.0.zip', 'srcmasngud-kasir-v3.3.zip', 'application/zip');
                         showToast(res.message);
                       }}
                       className="py-2 px-3 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[11px] font-bold transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer text-center"

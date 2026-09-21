@@ -352,37 +352,48 @@ export const listenToRealtimeCloud = (
 export const fetchCloudDatabase = async (uid: string) => {
   const path = `users/${uid}`;
   const timeoutPromise = new Promise<null>((_, reject) =>
-    setTimeout(() => reject(new Error('Koneksi database awan melebihi batas waktu (timeout).')), 8000)
+    setTimeout(() => reject(new Error('Koneksi database awan melebihi batas waktu (timeout).')), 15000)
   );
 
   const fetchPromise = (async () => {
     const userDocRef = doc(db, 'users', uid);
-    const userSnap = await getDoc(userDocRef);
-    const settings = userSnap.exists() ? userSnap.data() : null;
+    const docDeletedRef = doc(db, `users/${uid}/metadata`, 'deleted_ids');
 
-    const queryBarang = await getDocs(collection(db, `users/${uid}/barang`));
+    // Query in parallel using Promise.all for fast execution on mobile networks
+    const [userSnap, queryBarang, queryPelanggan, queryTransaksi, docDeletedSnap] = await Promise.all([
+      getDoc(userDocRef).catch(() => null),
+      getDocs(collection(db, `users/${uid}/barang`)).catch(() => null),
+      getDocs(collection(db, `users/${uid}/pelanggan`)).catch(() => null),
+      getDocs(collection(db, `users/${uid}/transaksi`)).catch(() => null),
+      getDoc(docDeletedRef).catch(() => null)
+    ]);
+
+    const settings = userSnap && userSnap.exists() ? userSnap.data() : null;
+
     const barangList: ItemBarang[] = [];
-    queryBarang.forEach((docSnap) => {
-      barangList.push(docSnap.data() as ItemBarang);
-    });
+    if (queryBarang) {
+      queryBarang.forEach((docSnap) => {
+        barangList.push(docSnap.data() as ItemBarang);
+      });
+    }
 
-    const queryPelanggan = await getDocs(collection(db, `users/${uid}/pelanggan`));
     const pelangganList: Pelanggan[] = [];
-    queryPelanggan.forEach((docSnap) => {
-      pelangganList.push(docSnap.data() as Pelanggan);
-    });
+    if (queryPelanggan) {
+      queryPelanggan.forEach((docSnap) => {
+        pelangganList.push(docSnap.data() as Pelanggan);
+      });
+    }
 
-    const queryTransaksi = await getDocs(collection(db, `users/${uid}/transaksi`));
     const transaksiList: Transaksi[] = [];
-    queryTransaksi.forEach((docSnap) => {
-      transaksiList.push(docSnap.data() as Transaksi);
-    });
+    if (queryTransaksi) {
+      queryTransaksi.forEach((docSnap) => {
+        transaksiList.push(docSnap.data() as Transaksi);
+      });
+    }
 
-    const docRef = doc(db, `users/${uid}/metadata`, 'deleted_ids');
-    const docSnap = await getDoc(docRef);
     let deletedIds = { barang: [] as string[], pelanggan: [] as string[], transaksi: [] as string[], karyawan: [] as string[] };
-    if (docSnap.exists()) {
-      const data = docSnap.data();
+    if (docDeletedSnap && docDeletedSnap.exists()) {
+      const data = docDeletedSnap.data();
       deletedIds = {
         barang: Array.isArray(data.barang) ? data.barang : [],
         pelanggan: Array.isArray(data.pelanggan) ? data.pelanggan : [],
@@ -407,7 +418,7 @@ export const fetchCloudDatabase = async (uid: string) => {
   try {
     return await Promise.race([fetchPromise, timeoutPromise]);
   } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, path);
+    console.warn("fetchCloudDatabase notice or timeout:", error);
     return null;
   }
 };

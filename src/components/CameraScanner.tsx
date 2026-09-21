@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { Camera, AlertCircle, RefreshCw } from 'lucide-react';
 
@@ -19,6 +19,23 @@ export default function CameraScanner({ onScanSuccess, onClose }: CameraScannerP
   useEffect(() => {
     onScanSuccessRef.current = onScanSuccess;
   }, [onScanSuccess]);
+
+  const playBeep = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = 1100;
+      gainNode.gain.setValueAtTime(0.08, audioCtx.currentTime);
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.08);
+    } catch (e) {
+      // user interaction or browser policy may block audio initially
+    }
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -69,7 +86,7 @@ export default function CameraScanner({ onScanSuccess, onClose }: CameraScannerP
         }).catch((err) => {
           console.error("Failed to start scanner:", err);
           if (isMounted) {
-            setError("Gagal mengakses kamera. Mohon pastikan izin akses kamera diberikan dan kamera tidak sedang dipakai oleh aplikasi lain.");
+            setError("Gagal mengakses kamera. Mohon pastikan izin kamera diberikan pada browser.");
             setIsInitializing(false);
           }
         });
@@ -81,23 +98,6 @@ export default function CameraScanner({ onScanSuccess, onClose }: CameraScannerP
         }
       }
     }, 400);
-
-    const playBeep = () => {
-      try {
-        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const oscillator = audioCtx.createOscillator();
-        const gainNode = audioCtx.createGain();
-        oscillator.type = 'sine';
-        oscillator.frequency.value = 1100;
-        gainNode.gain.setValueAtTime(0.08, audioCtx.currentTime);
-        oscillator.connect(gainNode);
-        gainNode.connect(audioCtx.destination);
-        oscillator.start();
-        oscillator.stop(audioCtx.currentTime + 0.08);
-      } catch (e) {
-        // user interaction or browser policy may block audio initially
-      }
-    };
 
     return () => {
       isMounted = false;
@@ -112,29 +112,27 @@ export default function CameraScanner({ onScanSuccess, onClose }: CameraScannerP
   }, []);
 
   return (
-    <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-4 overflow-hidden shadow-xl">
+    <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-4 overflow-hidden shadow-xl text-left">
       <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
         <div className="flex items-center gap-2 text-violet-400">
           <Camera className="w-4 h-4 animate-pulse" />
-          <h4 className="text-xs font-semibold text-slate-200">Kamera HP Scanner Aktif</h4>
+          <h4 className="text-xs font-semibold text-slate-200">Pemindai Barcode / QR</h4>
         </div>
         <button
+          type="button"
           onClick={onClose}
-          className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-0.5 rounded transition-colors font-medium cursor-pointer"
+          className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded-lg transition-colors font-medium cursor-pointer"
         >
           Tutup
         </button>
       </div>
 
       {error ? (
-        <div className="flex items-start gap-2.5 bg-rose-950/40 border border-rose-900/40 p-3 rounded-lg text-rose-300 text-xs">
+        <div className="flex items-start gap-2.5 bg-rose-950/40 border border-rose-900/40 p-3 rounded-lg text-rose-300 text-xs mb-3">
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
           <div className="space-y-1">
-            <p className="font-semibold text-rose-200">Gagal Membuka Kamera</p>
+            <p className="font-semibold text-rose-200">Kamera Tidak Tersedia</p>
             <p className="leading-relaxed text-[11px]">{error}</p>
-            <p className="text-[10px] text-slate-400 pt-1 border-t border-rose-950/50">
-              * Jika berjalan di dalam Iframe AI Studio, silakan klik tombol <b>Buka di Tab Baru</b> di pojok kanan atas layar agar browser dapat meloloskan izin hardware kamera Anda.
-            </p>
           </div>
         </div>
       ) : (
@@ -148,8 +146,9 @@ export default function CameraScanner({ onScanSuccess, onClose }: CameraScannerP
           <div id={elementId} className="w-full h-full max-w-sm rounded" />
         </div>
       )}
+
       <div className="mt-2 text-[10px] text-slate-400 text-center leading-normal">
-        Arahkan barcode / QR Code produk ke dalam petak fokus kamera di atas.
+        Arahkan kamera tepat ke barcode atau QR Code.
       </div>
     </div>
   );

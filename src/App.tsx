@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, FormEvent, ChangeEvent, useMemo, memo } from 'react';
+import React, { useEffect, useRef, useState, FormEvent, ChangeEvent, useMemo, useCallback, memo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { 
@@ -107,10 +107,18 @@ import {
   loginOrRegisterStoreAccount,
   getStoredStoreAccount,
   logoutStoreAccount,
-  resolveStoreId
+  resolveStoreId,
+  deriveStoreKey,
+  listenToIncomingOnlineOrders,
+  fetchPesananOnlineFromCloud
 } from './utils/firestoreSync';
 import { exportAndSaveFile, downloadRemoteFileBlob } from './utils/fileDownloader';
 import { BuildApkModal } from './components/BuildApkModal';
+
+// Static lookup map for INITIAL_BARANG prices to avoid linear array scans in loops
+const INITIAL_BARANG_PRICE_MAP = new Map<string, number>(
+  INITIAL_BARANG.map(p => [p.id, Number(p.beli) || 0])
+);
 
 // Safe localStorage helper with auto-pruning to prevent QuotaExceededError
 export const safeLocalStorageSet = (key: string, value: string): boolean => {
@@ -1325,6 +1333,9 @@ export default function App() {
   const [showFilteredPiutang, setShowFilteredPiutang] = useState<boolean>(true);
 
   const filteredTransaksi = useMemo(() => {
+    // Performance optimization: skip heavy iteration when not viewing the Riwayat tab
+    if (activeTab !== 'riwayat') return [];
+
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const todayEnd = new Date();
@@ -1396,9 +1407,11 @@ export default function App() {
 
       return true;
     });
-  }, [transaksi, searchRiwayat, filterMetodeBayar, filterRentangTanggal, filterTanggalMulai, filterTanggalAkhir]);
+  }, [transaksi, searchRiwayat, filterMetodeBayar, filterRentangTanggal, filterTanggalMulai, filterTanggalAkhir, activeTab]);
 
   const sortedAndGrouped = useMemo(() => {
+    if (activeTab !== 'riwayat') return { todayList: [], olderList: [] };
+
     const list = [...filteredTransaksi]
       .map((trx, originalIdx) => ({ trx, originalIdx }))
       .sort((a, b) => {
@@ -1425,9 +1438,22 @@ export default function App() {
     });
 
     return { todayList, olderList };
-  }, [filteredTransaksi]);
+  }, [filteredTransaksi, activeTab]);
 
   const filteredStats = useMemo(() => {
+    if (activeTab !== 'riwayat') {
+      return {
+        count: 0,
+        totalOmzet: 0,
+        totalTunai: 0,
+        totalQRIS: 0,
+        totalTransfer: 0,
+        totalKartu: 0,
+        totalPiutangBaru: 0,
+        totalPelunasanHutang: 0
+      };
+    }
+
     let totalOmzet = 0;
     let totalTunai = 0;
     let totalQRIS = 0;
@@ -1470,7 +1496,7 @@ export default function App() {
       totalPiutangBaru,
       totalPelunasanHutang
     };
-  }, [filteredTransaksi]);
+  }, [filteredTransaksi, activeTab]);
 
   const handleExportTransactionCSV = async () => {
     if (filteredTransaksi.length === 0) {
@@ -2792,6 +2818,9 @@ export default function App() {
   pelangganRef.current = pelanggan;
   const transaksiRef = useRef(transaksi);
   transaksiRef.current = transaksi;
+  const deletedIdsRef = useRef(deletedIds);
+  deletedIdsRef.current = deletedIds;
+  const driveSyncTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Monitor Google Drive active Auth state on page load
   useEffect(() => {
@@ -2998,6 +3027,61 @@ export default function App() {
     };
   }, [driveUser?.uid, isFirestoreSync, isInitialMergeDone]);
 
+  // Active store candidate IDs for receiving and syncing online orders
+  const activeOnlineStoreIds = useMemo(() => {
+    const ids: string[] = [];
+    if (driveUser?.uid) ids.push(driveUser.uid);
+    if (driveUser?.email) ids.push(deriveStoreKey(driveUser.email));
+    const resolved = resolveStoreId(driveUser);
+    if (resolved) ids.push(resolved);
+    ids.push('store_nanon4no23_gmail_com');
+    return Array.from(new Set(ids.filter(Boolean)));
+  }, [driveUser?.uid, driveUser?.email]);
+
+  // Dedicated processor for incoming online orders (from realtime listeners, heartbeats, or manual pulls)
+  const processIncomingOnlineOrders = useCallback((incomingOrders: PesananOnline[]) => {
+    if (!incomingOrders || !Array.isArray(incomingOrders)) return;
+    setPesananOnline(prev => {
+      const prevMap = new Map<string, PesananOnline>(prev.map(o => [o.id, o]));
+
+      // Merge incoming cloud orders with local state to protect completed orders
+      const mergedOrders: PesananOnline[] = incomingOrders.map(incoming => {
+        const existingLocal = prevMap.get(incoming.id);
+        // If locally it was already completed (Selesai), preserve Selesai and ensure Cloud is updated
+        if (existingLocal && existingLocal.status === 'Selesai' && incoming.status !== 'Selesai') {
+          syncPesananOnlineToCloud(activeOnlineStoreIds, { ...incoming, status: 'Selesai' });
+          return { ...incoming, status: 'Selesai' };
+        }
+        return incoming;
+      });
+
+      // Also preserve any local orders that might still be syncing
+      prev.forEach(localOrd => {
+        if (!mergedOrders.some(o => o.id === localOrd.id)) {
+          mergedOrders.push(localOrd);
+        }
+      });
+
+      const prevPending = prev.filter(o => o.status === 'Menunggu Konfirmasi').map(o => o.id);
+      const newPendingOrders = mergedOrders.filter(o => o.status === 'Menunggu Konfirmasi' && !prevPending.includes(o.id));
+      
+      if (newPendingOrders.length > 0) {
+        const latest = newPendingOrders[0];
+        showToast(`🔔 PESANAN ONLINE BARU! Dari ${latest.namaPembeli} (Rp ${(Number(latest.totalBayar) || 0).toLocaleString('id-ID')})`);
+        try {
+          playDeviceBeep(1200, 0.25);
+          setTimeout(() => playDeviceBeep(1600, 0.35), 180);
+          if (typeof navigator !== 'undefined' && navigator.vibrate) {
+            navigator.vibrate([200, 100, 200, 100, 300]);
+          }
+        } catch (e) {}
+      }
+
+      localStorage.setItem('src_pesanan_online', JSON.stringify(mergedOrders));
+      return mergedOrders;
+    });
+  }, [activeOnlineStoreIds]);
+
   // Monitor real-time Firestore database subscription
   useEffect(() => {
     if (!driveUser || !isFirestoreSync || !isInitialMergeDone) return;
@@ -3005,80 +3089,68 @@ export default function App() {
     try {
       const unsubRealtime = listenToRealtimeCloud(driveUser.uid, {
         onBarang: (items) => {
-          if (items) {
-            setDeletedIds(currentDels => {
-              const delSet = new Set(currentDels.barang || []);
-              const activeItems = items.filter(b => b && b.id && !delSet.has(b.id));
-              setBarang(activeItems);
-              localStorage.setItem('src_barang', JSON.stringify(activeItems));
-              return currentDels;
+          if (!items) return;
+          const currentDels = deletedIdsRef.current?.barang || [];
+          const delSet = new Set(currentDels);
+          const activeItems = items.filter(b => b && b.id && !delSet.has(b.id));
+
+          // Performance check: skip re-rendering if data is already identical to local state
+          const cur = barangRef.current || [];
+          if (activeItems.length === cur.length) {
+            const hasChange = activeItems.some((b, i) => {
+              const c = cur[i];
+              return !c || c.id !== b.id || c.stok !== b.stok || c.jual !== b.jual;
             });
+            if (!hasChange) return;
           }
+
+          setBarang(activeItems);
+          try {
+            localStorage.setItem('src_barang', JSON.stringify(activeItems));
+          } catch (e) {}
         },
         onPelanggan: (members) => {
-          if (members) {
-            setDeletedIds(currentDels => {
-              const delSet = new Set(currentDels.pelanggan || []);
-              const activeMembers = members.filter(p => p && p.id && !delSet.has(p.id));
-              setPelanggan(activeMembers);
-              localStorage.setItem('src_pelanggan', JSON.stringify(activeMembers));
-              return currentDels;
+          if (!members) return;
+          const currentDels = deletedIdsRef.current?.pelanggan || [];
+          const delSet = new Set(currentDels);
+          const activeMembers = members.filter(p => p && p.id && !delSet.has(p.id));
+
+          // Performance check: skip re-rendering if data is already identical to local state
+          const cur = pelangganRef.current || [];
+          if (activeMembers.length === cur.length) {
+            const hasChange = activeMembers.some((p, i) => {
+              const c = cur[i];
+              return !c || c.id !== p.id || c.poin !== p.poin || c.catatan !== p.catatan;
             });
+            if (!hasChange) return;
           }
+
+          setPelanggan(activeMembers);
+          try {
+            localStorage.setItem('src_pelanggan', JSON.stringify(activeMembers));
+          } catch (e) {}
         },
         onTransaksi: (trx) => {
-          if (trx) {
-            setDeletedIds(currentDels => {
-              const delSet = new Set(currentDels.transaksi || []);
-              const activeTrx = trx.filter(t => t && t.id && !delSet.has(t.id));
-              setTransaksi(activeTrx);
-              localStorage.setItem('src_transaksi', JSON.stringify(activeTrx));
-              return currentDels;
-            });
+          if (!trx) return;
+          const currentDels = deletedIdsRef.current?.transaksi || [];
+          const delSet = new Set(currentDels);
+          const activeTrx = trx.filter(t => t && t.id && !delSet.has(t.id));
+
+          // Performance check: prevent duplicate re-render & JSON serialization after local sale
+          const cur = transaksiRef.current || [];
+          if (activeTrx.length === cur.length) {
+            const curIds = new Set(cur.map(t => t.id));
+            const hasChange = activeTrx.some(t => !curIds.has(t.id));
+            if (!hasChange) return;
           }
+
+          setTransaksi(activeTrx);
+          try {
+            localStorage.setItem('src_transaksi', JSON.stringify(activeTrx));
+          } catch (e) {}
         },
         onPesananOnline: (orders) => {
-          if (orders && Array.isArray(orders)) {
-            setPesananOnline(prev => {
-              const prevMap = new Map<string, PesananOnline>(prev.map(o => [o.id, o]));
-              const targetUid = driveUser?.uid || resolveStoreId();
-
-              // Merge incoming cloud orders with local state to protect completed orders
-              const mergedOrders: PesananOnline[] = orders.map(incoming => {
-                const existingLocal = prevMap.get(incoming.id);
-                // If locally it was already completed (Selesai), preserve Selesai and ensure Cloud is updated
-                if (existingLocal && existingLocal.status === 'Selesai' && incoming.status !== 'Selesai') {
-                  if (targetUid) {
-                    syncPesananOnlineToCloud(targetUid, { ...incoming, status: 'Selesai' });
-                  }
-                  return { ...incoming, status: 'Selesai' };
-                }
-                return incoming;
-              });
-
-              // Also preserve any local orders that might still be syncing
-              prev.forEach(localOrd => {
-                if (!mergedOrders.some(o => o.id === localOrd.id)) {
-                  mergedOrders.push(localOrd);
-                }
-              });
-
-              const prevPending = prev.filter(o => o.status === 'Menunggu Konfirmasi').map(o => o.id);
-              const newPendingOrders = mergedOrders.filter(o => o.status === 'Menunggu Konfirmasi' && !prevPending.includes(o.id));
-              
-              if (newPendingOrders.length > 0) {
-                const latest = newPendingOrders[0];
-                showToast(`🔔 PESANAN ONLINE BARU! Dari ${latest.namaPembeli} (${latest.id})`);
-                try {
-                  playDeviceBeep(1200, 0.2);
-                  setTimeout(() => playDeviceBeep(1600, 0.3), 150);
-                } catch (e) {}
-              }
-
-              localStorage.setItem('src_pesanan_online', JSON.stringify(mergedOrders));
-              return mergedOrders;
-            });
-          }
+          processIncomingOnlineOrders(orders);
         },
         onDeletedIds: (cloudDel) => {
           if (cloudDel) {
@@ -3199,33 +3271,91 @@ export default function App() {
     }
   }, [driveUser?.uid, isFirestoreSync, isInitialMergeDone]);
 
-  const triggerCloudAutoSync = async (
+  // Dedicated Multi-Path Real-Time Online Order Listener & Heartbeat Polling
+  // Guaranteed to capture orders from both user-specific subcollections and root pesanan_online
+  useEffect(() => {
+    let isSubscribed = true;
+
+    // 1. Immediate fetch from all candidate stores
+    fetchPesananOnlineFromCloud(activeOnlineStoreIds).then(orders => {
+      if (isSubscribed && orders && orders.length > 0) {
+        processIncomingOnlineOrders(orders);
+      }
+    }).catch(err => console.warn('[App] Initial online orders fetch:', err));
+
+    // 2. Real-time multi-listener
+    const unsubscribe = listenToIncomingOnlineOrders(activeOnlineStoreIds, (incoming) => {
+      if (isSubscribed) {
+        processIncomingOnlineOrders(incoming);
+      }
+    });
+
+    // 3. 15-second heartbeat poll to ensure zero lost orders on Android WebView / mobile connections
+    const heartbeatTimer = setInterval(() => {
+      if (!isSubscribed) return;
+      fetchPesananOnlineFromCloud(activeOnlineStoreIds).then(orders => {
+        if (isSubscribed && orders && orders.length > 0) {
+          processIncomingOnlineOrders(orders);
+        }
+      }).catch(() => {});
+    }, 15000);
+
+    return () => {
+      isSubscribed = false;
+      unsubscribe();
+      clearInterval(heartbeatTimer);
+    };
+  }, [activeOnlineStoreIds, processIncomingOnlineOrders]);
+
+  // Handler for manual cloud pull button in PesananOnlineManager
+  const handleRefreshOnlineOrders = useCallback(async () => {
+    try {
+      showToast('⏳ Memeriksa pesanan online di cloud...');
+      const orders = await fetchPesananOnlineFromCloud(activeOnlineStoreIds);
+      if (orders && orders.length > 0) {
+        processIncomingOnlineOrders(orders);
+        showToast(`✅ Berhasil menarik ${orders.length} pesanan online dari cloud!`);
+      } else {
+        showToast('ℹ️ Tidak ada pesanan baru di cloud.');
+      }
+    } catch (e: any) {
+      console.error('Refresh online orders error:', e);
+      showToast(`❌ Gagal menarik pesanan cloud: ${e?.message || e}`);
+    }
+  }, [activeOnlineStoreIds, processIncomingOnlineOrders]);
+
+  const triggerCloudAutoSync = (
     currentBarang: ItemBarang[],
     currentPelanggan: Pelanggan[],
     currentTransaksi: Transaksi[]
   ) => {
     const token = driveToken;
     if (!token) return;
-    try {
-      setIsDriveLoading(true);
-      const res = await uploadBackupToDrive(token, {
-        barang: currentBarang,
-        pelanggan: currentPelanggan,
-        transaksi: currentTransaksi,
-        config: config,
-        minBelanjaPerPoin: minBelanjaPerPoin,
-        nilaiRupiahPerPoin: nilaiRupiahPerPoin
-      });
-      if (res.success) {
-        const timeStr = new Date().toLocaleString('id-ID');
-        setDriveLastSync(timeStr);
-        localStorage.setItem('cfg_drive_last_sync', timeStr);
-      }
-    } catch (err) {
-      console.error('Auto sync to Google Drive failed:', err);
-    } finally {
-      setIsDriveLoading(false);
+
+    if (driveSyncTimerRef.current) {
+      clearTimeout(driveSyncTimerRef.current);
     }
+
+    // Debounce background auto-sync by 4.5 seconds to batch multiple operations and never block the POS UI
+    driveSyncTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await uploadBackupToDrive(token, {
+          barang: barangRef.current,
+          pelanggan: pelangganRef.current,
+          transaksi: transaksiRef.current,
+          config: configRef.current,
+          minBelanjaPerPoin: minBelanjaRef.current,
+          nilaiRupiahPerPoin: nilaiPoinRef.current
+        });
+        if (res.success) {
+          const timeStr = new Date().toLocaleString('id-ID');
+          setDriveLastSync(timeStr);
+          localStorage.setItem('cfg_drive_last_sync', timeStr);
+        }
+      } catch (err) {
+        console.error('Auto sync to Google Drive failed:', err);
+      }
+    }, 4500);
   };
 
   const handleBackupToDrive = async (forceNoConfirm = false) => {
@@ -4121,9 +4251,7 @@ export default function App() {
       return updated;
     });
 
-    if (driveUser) {
-      syncPesananOnlineToCloud(driveUser.uid, newOrder);
-    }
+    syncPesananOnlineToCloud(activeOnlineStoreIds, newOrder);
 
     // Auto register customer as member if not already registered!
     if (newOrder.namaPembeli && newOrder.namaPembeli.trim()) {
@@ -4191,9 +4319,8 @@ export default function App() {
     setPesananOnline(updatedList);
     localStorage.setItem('src_pesanan_online', JSON.stringify(updatedList));
 
-    const targetUid = driveUser?.uid || resolveStoreId();
-    if (targetUid && updatedTarget) {
-      syncPesananOnlineToCloud(targetUid, updatedTarget);
+    if (updatedTarget) {
+      syncPesananOnlineToCloud(activeOnlineStoreIds, updatedTarget);
     }
 
     if (status === 'Dibatalkan') {
@@ -4208,10 +4335,7 @@ export default function App() {
     setPesananOnline(updatedList);
     localStorage.setItem('src_pesanan_online', JSON.stringify(updatedList));
 
-    const targetUid = driveUser?.uid || resolveStoreId();
-    if (targetUid) {
-      syncPesananOnlineToCloud(targetUid, updatedOrder);
-    }
+    syncPesananOnlineToCloud(activeOnlineStoreIds, updatedOrder);
 
     showToast(`✏️ Pesanan ${updatedOrder.id} berhasil diperbarui!`);
   };
@@ -4221,10 +4345,7 @@ export default function App() {
     setPesananOnline(updatedList);
     localStorage.setItem('src_pesanan_online', JSON.stringify(updatedList));
 
-    const targetUid = driveUser?.uid || resolveStoreId();
-    if (targetUid) {
-      deletePesananOnlineFromCloud(targetUid, orderId);
-    }
+    deletePesananOnlineFromCloud(activeOnlineStoreIds, orderId);
 
     showToast(`🗑️ Pesanan ${orderId} berhasil dihapus!`);
   };
@@ -4240,12 +4361,9 @@ export default function App() {
     setPesananOnline(updatedList);
     localStorage.setItem('src_pesanan_online', JSON.stringify(updatedList));
 
-    const targetUid = driveUser?.uid || resolveStoreId();
-    if (targetUid) {
-      toDelete.forEach(o => {
-        deletePesananOnlineFromCloud(targetUid, o.id);
-      });
-    }
+    toDelete.forEach(o => {
+      deletePesananOnlineFromCloud(activeOnlineStoreIds, o.id);
+    });
 
     showToast(`🗑️ ${toDelete.length} pesanan selesai & dibatalkan berhasil dihapus!`);
   };
@@ -4305,10 +4423,7 @@ export default function App() {
     localStorage.setItem('src_pesanan_online', JSON.stringify(updatedOnlineOrders));
 
     // CRITICAL: Sync 'Selesai' status immediately to Firestore Cloud so it never reverts back to pending!
-    const targetUid = driveUser?.uid || resolveStoreId();
-    if (targetUid) {
-      syncPesananOnlineToCloud(targetUid, completedOrder);
-    }
+    syncPesananOnlineToCloud(activeOnlineStoreIds, completedOrder);
 
     try {
       playDeviceBeep(1200, 0.25);
@@ -5163,8 +5278,8 @@ export default function App() {
     return new Date(year, month, day, h, mi, s);
   }
 
-  // --- AUTOMATED MONTHLY SALES CALCULATOR & SCHEDULER GROUPING ---
-  const monthlySalesGroups = useMemo(() => {
+  // Helper computing monthly sales grouping using fast O(1) price lookup
+  const computeMonthlySalesGroups = (txList: Transaksi[], bList: ItemBarang[]) => {
     const groups: Record<string, {
       monthKey: string;
       monthLabel: string;
@@ -5175,11 +5290,11 @@ export default function App() {
     }> = {};
 
     const barangBeliMap = new Map<string, number>();
-    barang.forEach(p => {
+    bList.forEach(p => {
       if (p) barangBeliMap.set(p.id, Number(p.beli) || 0);
     });
 
-    transaksi.forEach(t => {
+    txList.forEach(t => {
       if (!t) return;
       const date = parseTransactionDate(t);
       const year = date.getFullYear();
@@ -5217,8 +5332,7 @@ export default function App() {
             costPrice = barangBeliMap.get(soldItem.id) || 0;
           }
           if (isNaN(costPrice) || costPrice <= 0) {
-            const origFallback = INITIAL_BARANG.find(p => p && p.id === soldItem.id);
-            costPrice = origFallback ? (Number(origFallback.beli) || 0) : 0;
+            costPrice = INITIAL_BARANG_PRICE_MAP.get(soldItem.id) || 0;
           }
           if (isNaN(costPrice) || costPrice <= 0) {
             costPrice = (Number(soldItem.jual) || 0) * 0.75;
@@ -5230,10 +5344,25 @@ export default function App() {
     });
 
     return Object.values(groups).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
-  }, [transaksi, barang]);
+  };
 
-  // --- 12 MONTH PROFIT TREND FOR STATISTIK TAB ---
+  // --- AUTOMATED MONTHLY SALES CALCULATOR & SCHEDULER GROUPING (LAZY) ---
+  const cachedMonthlySalesGroupsRef = useRef<any[]>([]);
+  const monthlySalesGroups = useMemo(() => {
+    if (activeTab !== 'dashboard') {
+      return cachedMonthlySalesGroupsRef.current;
+    }
+    const computed = computeMonthlySalesGroups(transaksi, barang);
+    cachedMonthlySalesGroupsRef.current = computed;
+    return computed;
+  }, [transaksi, barang, activeTab]);
+
+  // --- 12 MONTH PROFIT TREND FOR STATISTIK TAB (LAZY) ---
+  const cachedYearlyProfitTrendDataRef = useRef<any[]>([]);
   const yearlyProfitTrendData = useMemo(() => {
+    if (activeTab !== 'dashboard') {
+      return cachedYearlyProfitTrendDataRef.current;
+    }
     const result = [];
     const now = new Date();
     const monthNamesShort = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
@@ -5261,8 +5390,9 @@ export default function App() {
         count: g ? g.count : 0,
       });
     }
+    cachedYearlyProfitTrendDataRef.current = result;
     return result;
-  }, [monthlySalesGroups]);
+  }, [monthlySalesGroups, activeTab]);
 
   useEffect(() => {
     if (transaksi.length === 0) return;
@@ -5298,7 +5428,8 @@ export default function App() {
 
   const triggerDownloadUnexportedMonth = () => {
     if (!unexportedMonth) return;
-    const group = monthlySalesGroups.find(g => g.monthKey === unexportedMonth.key);
+    const group = monthlySalesGroups.find(g => g.monthKey === unexportedMonth.key) ||
+      computeMonthlySalesGroups(transaksi, barang).find(g => g.monthKey === unexportedMonth.key);
     if (group) {
       handleExportMonthlyCSV(group);
       setShowAutoReportPrompt(false);
@@ -5309,7 +5440,8 @@ export default function App() {
 
   const triggerDownloadUnexportedMonthPDF = () => {
     if (!unexportedMonth) return;
-    const group = monthlySalesGroups.find(g => g.monthKey === unexportedMonth.key);
+    const group = monthlySalesGroups.find(g => g.monthKey === unexportedMonth.key) ||
+      computeMonthlySalesGroups(transaksi, barang).find(g => g.monthKey === unexportedMonth.key);
     if (group) {
       handleExportMonthlyPDF(group);
       setShowAutoReportPrompt(false);
@@ -6174,15 +6306,21 @@ export default function App() {
     } catch (e) {}
   };
 
-  // Helper mapping items currently in the shopping cart and calculate their pricing
-  const getCartDetails = (): DetailItemTransaksi[] => {
+  // Optimized & Memoized Shopping Cart Details Engine
+  const cartDetails = useMemo((): DetailItemTransaksi[] => {
     const details: DetailItemTransaksi[] = [];
     
+    // Fast O(1) item lookup map
+    const barangMap = new Map<string, ItemBarang>();
+    barang.forEach(p => {
+      if (p) barangMap.set(p.id, p);
+    });
+
     Object.entries(keranjang).forEach(([id, rawQty]) => {
       const qty = Number(rawQty);
       if (qty <= 0) return;
       
-      const prod = barang.find(p => p.id === id);
+      const prod = barangMap.get(id);
       
       if (prod) {
         let currentPrice = prod.jual;
@@ -6294,11 +6432,19 @@ export default function App() {
     });
 
     return details;
-  };
+  }, [keranjang, barang, cartUnits, customPrices, virtualItems, cartTimestamps]);
 
-  const getCartTotal = () => {
-    return getCartDetails().reduce((sum, item) => sum + item.subtotal, 0);
-  };
+  const cartTotal = useMemo(() => {
+    return cartDetails.reduce((sum, item) => sum + item.subtotal, 0);
+  }, [cartDetails]);
+
+  const getCartDetails = useCallback((): DetailItemTransaksi[] => {
+    return cartDetails;
+  }, [cartDetails]);
+
+  const getCartTotal = useCallback((): number => {
+    return cartTotal;
+  }, [cartTotal]);
 
   const updateCartQty = (id: string, delta: number) => {
     const prod = barang.find(p => p.id === id);
@@ -6921,13 +7067,28 @@ export default function App() {
 
   const connectAndroidNativePrinter = async (device: { name: string; address: string }, isQuiet = false) => {
     setBtStatus('connecting');
-    if (!isQuiet) setBtErrorMsg('');
+    if (!isQuiet) {
+      setBtErrorMsg('');
+      showToast(`⏳ Menyambungkan ke ${device.name || 'Printer'}...`);
+    }
     setShowBtDevicePicker(false);
     try {
       const ap = (window as any).AndroidPrinter;
       if (!ap) throw new Error("Fitur Bluetooth Android tidak ditemukan.");
 
-      const resStr = ap.connect(device.address);
+      // Berikan jeda sejenak agar status visual 'connecting' sempat di-render di antarmuka
+      await new Promise(r => setTimeout(r, 60));
+
+      const resStr = await new Promise<string>((resolve) => {
+        setTimeout(() => {
+          try {
+            resolve(ap.connect(device.address));
+          } catch (e: any) {
+            resolve(JSON.stringify({ success: false, error: e?.message || "Koneksi gagal" }));
+          }
+        }, 20);
+      });
+
       let res: any = {};
       try { res = JSON.parse(resStr); } catch (e) { res = { success: false, error: resStr }; }
 
@@ -8951,7 +9112,13 @@ export default function App() {
   }, [barang, bulkBarcodeSearch, bulkBarcodeCategoryFilter]);
 
   // --- CORE ANALYTICS ENGINE CALCULATION (MEMOIZED BY CACHING HEAVY ITERATIONS) ---
+  const cachedStatsRef = useRef<any>(null);
   const stats = useMemo(() => {
+    // Performance optimization: skip heavy iteration when not viewing the Dashboard or Home tab
+    if (activeTab !== 'dashboard' && activeTab !== 'home' && cachedStatsRef.current) {
+      return cachedStatsRef.current;
+    }
+
     const totalItems = barang.length;
     let totalStockVolume = 0;
     let estimatedCostCapital = 0;
@@ -9060,8 +9227,7 @@ export default function App() {
             costPrice = barangBeliMap.get(soldItem.id) || 0;
           }
           if (isNaN(costPrice) || costPrice <= 0) {
-            const origFallback = INITIAL_BARANG.find(p => p && p.id === soldItem.id);
-            costPrice = origFallback ? (Number(origFallback.beli) || 0) : 0;
+            costPrice = INITIAL_BARANG_PRICE_MAP.get(soldItem.id) || 0;
           }
           if (isNaN(costPrice) || costPrice <= 0) {
             costPrice = (Number(soldItem.jual) || 0) * 0.75;
@@ -9073,7 +9239,7 @@ export default function App() {
 
     const netProfit = realizedOmset - realizedBeliCostOfGoodsSold;
 
-    return {
+    const result = {
       totalItems,
       totalStockVolume,
       estimatedCostCapital,
@@ -9085,10 +9251,17 @@ export default function App() {
       paymentMethodBreakdown,
       filteredTrxCount: filteredTransaksiForStats.length
     };
-  }, [barang, transaksi, statsFilterType, statsStartDate, statsEndDate]);
+    cachedStatsRef.current = result;
+    return result;
+  }, [barang, transaksi, statsFilterType, statsStartDate, statsEndDate, activeTab]);
 
   // --- CORE SALES POPULARITY CALCULATIONS ---
+  const cachedSalesRankRef = useRef<any>({ terlaris: [], jarangLaku: [] });
   const salesRankStats = useMemo(() => {
+    if (activeTab !== 'dashboard' && cachedSalesRankRef.current.terlaris.length > 0) {
+      return cachedSalesRankRef.current;
+    }
+
     const itemSalesMap = new Map<string, { id: string; nama: string; kode: string; kategori: string; qty: number; totalOmzet: number }>();
 
     // Seed map with all current products in catalog to ensure we track 0 sales
@@ -9139,13 +9312,20 @@ export default function App() {
     // Least sellers sorted ascending
     const jarangLaku = [...allSales].sort((a, b) => a.qty - b.qty);
 
-    return {
+    const result = {
       terlaris,
       jarangLaku,
     };
-  }, [barang, transaksi]);
+    cachedSalesRankRef.current = result;
+    return result;
+  }, [barang, transaksi, activeTab]);
 
+  const cachedChartDataRef = useRef<any[]>([]);
   const chartData = useMemo(() => {
+    if (activeTab !== 'dashboard' && cachedChartDataRef.current.length > 0) {
+      return cachedChartDataRef.current;
+    }
+
     const result = [];
     const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agt', 'Sep', 'Okt', 'Nov', 'Des'];
@@ -9175,8 +9355,9 @@ export default function App() {
         sales: totalSales,
       });
     }
+    cachedChartDataRef.current = result;
     return result;
-  }, [transaksi]);
+  }, [transaksi, activeTab]);
 
   const lowStockProducts = useMemo(() => {
     return barang.filter(p => p && (Number(p.stok) || 0) <= 3);
@@ -10864,21 +11045,63 @@ export default function App() {
         
         {/* --- BLUE TOOTH DIAGNOSTIC WARNING --- */}
         {btStatus === 'error' && (
-          <div className="bg-rose-50 border border-rose-300 rounded-xl p-4 mb-6 text-xs text-rose-800 flex items-start gap-3">
+          <div id="bt-printer-error-banner" className="bg-rose-50 border border-rose-300 rounded-xl p-4 mb-6 text-xs text-rose-800 flex items-start gap-3 shadow-sm">
             <AlertTriangle className="w-5 h-5 shrink-0 text-rose-600 animate-pulse mt-0.5" />
             <div className="flex-1">
-              <p className="font-bold text-rose-900 mb-1">Gagal Menghubungkan Printer Bluetooth – SRC MASNGUD</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-bold text-rose-900 text-sm">Gagal Menghubungkan Printer Bluetooth – SRC MASNGUD</p>
+                <button
+                  type="button"
+                  id="btn-dismiss-bt-error"
+                  onClick={() => setBtStatus('disconnected')}
+                  className="text-rose-500 hover:text-rose-700 font-bold p-1 text-base leading-none"
+                  title="Tutup Notifikasi"
+                >
+                  ✕
+                </button>
+              </div>
               <p className="mt-1 leading-relaxed">
                 Pesan Error: <code className="font-mono bg-rose-100 px-1.5 py-0.5 rounded text-rose-700 whitespace-pre-line">{btErrorMsg}</code>
               </p>
-              <div className="mt-3 bg-white p-3 rounded-lg border border-rose-200 text-slate-700 space-y-1.5 leading-relaxed font-medium">
-                <p className="font-extrabold text-xs text-slate-855">💡 Langkah Mengatasi &amp; Informasi Penting:</p>
+              <div className="mt-3 bg-white p-3.5 rounded-lg border border-rose-200 text-slate-700 space-y-2 leading-relaxed font-medium">
+                <p className="font-extrabold text-xs text-slate-900">💡 Langkah Mengatasi Printer Bluetooth yang Konek Lalu Putus:</p>
                 {typeof (window as any).AndroidPrinter !== 'undefined' ? (
                   <>
-                    <p>1. Pastikan <b>Bluetooth</b> dan <b>Printer Thermal</b> Anda sudah dalam posisi <b>ON / Menyala</b>.</p>
-                    <p>2. Buka <b>Pengaturan (Settings) &gt; Bluetooth</b> di HP Android Anda, cari printer lalu pasangkan (PIN biasanya <b>0000</b> atau <b>1234</b>).</p>
-                    <p>3. Jika ada pop-up izin Bluetooth Android dari aplikasi SRC MASNGUD, klik <b>Izinkan (Allow)</b>.</p>
-                    <p>4. Setelah tersambung di Bluetooth HP, kembali ke aplikasi ini dan klik tombol <b>Printer</b> di menu atas untuk menghubungkan.</p>
+                    <p>1. <b>Matikan lalu Hidupkan Kembali (Restart)</b> Printer Thermal Anda untuk mereset memori koneksi printer.</p>
+                    <p>2. Pastikan printer <b>tidak sedang tersambung</b> ke HP lain atau aplikasi kasir lain (printer thermal hanya bisa menerima 1 koneksi aktif).</p>
+                    <p>3. Buka <b>Pengaturan Bluetooth HP</b>, cari printer, lalu pastikan statusnya <b>Tersandingkan / Terpasang (Paired)</b> dengan PIN <code>0000</code> atau <code>1234</code>.</p>
+                    <p>4. Jika sebelumnya sudah dipasangkan tapi sering putus, pilih <b>Hapus Pasangan (Unpair)</b> lalu sandingkan ulang printer Anda dari Pengaturan Bluetooth HP.</p>
+                    
+                    <div className="pt-2 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        id="btn-open-bt-settings"
+                        onClick={() => {
+                          try {
+                            const ap = (window as any).AndroidPrinter;
+                            if (ap && typeof ap.openBluetoothSettings === 'function') {
+                              ap.openBluetoothSettings();
+                            }
+                          } catch (e) {
+                            console.error("Failed to open BT settings:", e);
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-bold rounded-lg shadow-sm flex items-center gap-1.5 transition-all"
+                      >
+                        ⚙️ Buka Pengaturan Bluetooth HP
+                      </button>
+                      <button
+                        type="button"
+                        id="btn-retry-connect-bt"
+                        onClick={() => {
+                          setBtStatus('disconnected');
+                          handleConnectBluetoothThermal();
+                        }}
+                        className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-lg border border-slate-300 active:scale-95 transition-all"
+                      >
+                        🔄 Coba Hubungkan Ulang
+                      </button>
+                    </div>
                   </>
                 ) : (
                   <>
@@ -11471,6 +11694,9 @@ export default function App() {
               hideCustomerPortal={Boolean(config.sembunyikanPortalPembeli)}
               config={config}
               onUpdateConfig={handleConfigUpdate}
+              currentStoreId={activeOnlineStoreIds[0] || 'store_nanon4no23_gmail_com'}
+              onRefreshCloud={handleRefreshOnlineOrders}
+              onAddManualOrder={handlePlaceOnlineOrder}
             />
           </div>
         )}
@@ -22806,6 +23032,7 @@ export default function App() {
             onCloseStore={() => setIsCustomerPortalOpen(false)}
             isOwnerView={true}
             existingOrders={pesananOnline}
+            storeId={activeOnlineStoreIds[0] || 'store_nanon4no23_gmail_com'}
           />
         </div>
       )}

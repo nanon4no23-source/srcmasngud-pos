@@ -5,7 +5,8 @@ import {
   ShoppingBag, CheckCircle2, Clock, Truck, Store, XCircle, 
   MessageCircle, Printer, Share2, AlertCircle, Eye, ChevronRight,
   Filter, Search, QrCode, Copy, Check, Edit3, Trash2, Plus, Minus, X, PackageX,
-  Image as ImageIcon, Upload, Sparkles, Power, Tag, ArrowUpRight, Link2, Globe, ExternalLink
+  Image as ImageIcon, Upload, Sparkles, Power, Tag, ArrowUpRight, Link2, Globe, ExternalLink,
+  RefreshCw, FileText
 } from 'lucide-react';
 
 interface PesananOnlineManagerProps {
@@ -23,6 +24,9 @@ interface PesananOnlineManagerProps {
   hideCustomerPortal?: boolean;
   config?: ConfigStruk;
   onUpdateConfig?: (key: keyof ConfigStruk, value: any) => void;
+  currentStoreId?: string;
+  onRefreshCloud?: () => Promise<void>;
+  onAddManualOrder?: (newOrder: PesananOnline) => void;
 }
 
 // Helper to compress uploaded promo banner image
@@ -80,8 +84,12 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
   waNumber = '',
   hideCustomerPortal = false,
   config,
-  onUpdateConfig
+  onUpdateConfig,
+  currentStoreId,
+  onRefreshCloud,
+  onAddManualOrder
 }) => {
+  const activeStoreId = useMemo(() => currentStoreId || resolveStoreId(), [currentStoreId]);
   const [filterStatus, setFilterStatus] = useState<string>('Semua');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
@@ -89,6 +97,164 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
   const [customLinkInput, setCustomLinkInput] = useState('');
   const [cancelReasonModal, setCancelReasonModal] = useState<{ id: string } | null>(null);
   const [cancelReason, setCancelReason] = useState('');
+
+  // State for Cloud Refresh & WhatsApp Text Import
+  const [isRefreshingCloud, setIsRefreshingCloud] = useState(false);
+  const [isWhatsAppImportOpen, setIsWhatsAppImportOpen] = useState(false);
+  const [whatsAppText, setWhatsAppText] = useState('');
+  const [whatsAppParseError, setWhatsAppParseError] = useState('');
+
+  const handleRefreshCloud = async () => {
+    if (isRefreshingCloud) return;
+    setIsRefreshingCloud(true);
+    try {
+      if (onRefreshCloud) {
+        await onRefreshCloud();
+      }
+    } catch (e) {
+      console.warn('Error refreshing cloud orders:', e);
+    } finally {
+      setTimeout(() => setIsRefreshingCloud(false), 700);
+    }
+  };
+
+  const handleImportWhatsAppOrder = () => {
+    if (!whatsAppText.trim()) {
+      setWhatsAppParseError('Teks pesan WhatsApp tidak boleh kosong.');
+      return;
+    }
+
+    try {
+      const text = whatsAppText;
+      let nama = 'Pelanggan WhatsApp';
+      let telepon = '-';
+      let alamat = '-';
+      let catatan = '';
+      let tipePengiriman: 'Ambil di Toko' | 'Pesan Antar' = 'Pesan Antar';
+
+      // 1. Extract Nama
+      const nameMatch = text.match(/(?:Nama|Nama Pembeli|Pemesan|Atas Nama)\s*[:=]\s*([^\n\r]+)/i);
+      if (nameMatch && nameMatch[1].trim()) nama = nameMatch[1].trim();
+
+      // 2. Extract Telepon/HP
+      const phoneMatch = text.match(/(?:No\.?\s*HP|Nomor|Telepon|WhatsApp|WA|Kontak)\s*[:=]\s*([0-9+\s\-]+)/i);
+      if (phoneMatch && phoneMatch[1].trim()) {
+        telepon = phoneMatch[1].replace(/[^0-9+]/g, '');
+      }
+
+      // 3. Extract Alamat
+      const addrMatch = text.match(/(?:Alamat|Lokasi|Tujuan|Kirim Ke)\s*[:=]\s*([^\n\r]+)/i);
+      if (addrMatch && addrMatch[1].trim()) alamat = addrMatch[1].trim();
+
+      // 4. Extract Catatan
+      const noteMatch = text.match(/(?:Catatan|Notes?|Keterangan)\s*[:=]\s*([^\n\r]+)/i);
+      if (noteMatch && noteMatch[1].trim()) catatan = noteMatch[1].trim();
+
+      if (/ambil\s*di\s*toko|pickup|ambil\s*sendiri/i.test(text)) {
+        tipePengiriman = 'Ambil di Toko';
+      }
+
+      // 5. Extract Items
+      const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+      const parsedItems: DetailItemPesananOnline[] = [];
+      let calculatedTotal = 0;
+
+      lines.forEach((line) => {
+        if (/^(nama|no\.?\s*hp|alamat|catatan|total|tipe|metode|pesanan\s*baru|\*pesanan)/i.test(line)) return;
+
+        const qtyMatch = line.match(/(?:^[-*•]?\s*)(?:(\d+)\s*(?:x|pcs|biji|kg|btg|slop)\s+)?(.*?)(?:\s*(?:x|\*|\@)\s*(\d+))?(?:\s*[-=:]\s*(?:Rp\.?\s*)?([\d\.,]+))?$/i);
+        
+        if (qtyMatch) {
+          const qty = parseInt(qtyMatch[1] || qtyMatch[3] || '1', 10) || 1;
+          const rawItemName = (qtyMatch[2] || '').trim().replace(/^[-*•\s]+/, '').replace(/[\(\)]/g, '');
+          let price = 0;
+          if (qtyMatch[4]) {
+            price = parseInt(qtyMatch[4].replace(/[^0-9]/g, ''), 10) || 0;
+          }
+
+          if (rawItemName && rawItemName.length > 1) {
+            const matchedBarang = (barang || []).find(b => 
+              b.nama.toLowerCase().includes(rawItemName.toLowerCase()) || 
+              rawItemName.toLowerCase().includes(b.nama.toLowerCase())
+            );
+
+            const finalPrice = price > 0 ? (price > 1000 ? Math.round(price / (qty > 0 ? qty : 1)) : price) : (matchedBarang ? matchedBarang.hargaJual : 10000);
+            const subtotal = finalPrice * qty;
+            calculatedTotal += subtotal;
+
+            parsedItems.push({
+              itemId: matchedBarang ? matchedBarang.id : `manual-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+              nama: matchedBarang ? matchedBarang.nama : rawItemName,
+              kode: matchedBarang?.barcode || matchedBarang?.id || '',
+              harga: finalPrice,
+              jual: finalPrice,
+              qty: qty,
+              subtotal: subtotal,
+              barcode: matchedBarang?.barcode || '',
+              satuan: matchedBarang?.satuan || 'pcs',
+              satuanNama: matchedBarang?.satuan || 'pcs'
+            });
+          }
+        }
+      });
+
+      const totalMatch = text.match(/(?:Total|Total Bayar|Grand Total)\s*[:=]\s*(?:Rp\.?\s*)?([\d\.,]+)/i);
+      let grandTotal = calculatedTotal;
+      if (totalMatch && totalMatch[1]) {
+        const explicitTotal = parseInt(totalMatch[1].replace(/[^0-9]/g, ''), 10);
+        if (explicitTotal > 0) grandTotal = explicitTotal;
+      }
+
+      if (parsedItems.length === 0) {
+        parsedItems.push({
+          itemId: `manual-${Date.now()}`,
+          nama: 'Item Pesanan WhatsApp',
+          kode: 'WA-ITEM',
+          harga: grandTotal > 0 ? grandTotal : 15000,
+          jual: grandTotal > 0 ? grandTotal : 15000,
+          qty: 1,
+          subtotal: grandTotal > 0 ? grandTotal : 15000,
+          satuan: 'pcs',
+          satuanNama: 'pcs'
+        });
+        if (grandTotal === 0) grandTotal = 15000;
+      }
+
+      const now = new Date();
+      const newManualOrder: PesananOnline = {
+        id: `WA-${Date.now().toString().slice(-6)}`,
+        waktu: now.toLocaleString('id-ID'),
+        waktuPesan: now.toISOString(),
+        timestamp: now.getTime(),
+        namaPembeli: nama,
+        teleponPembeli: telepon,
+        alamatPembeli: alamat,
+        alamatPengiriman: alamat,
+        catatan: catatan ? `${catatan} (Via Salin Chat WhatsApp)` : 'Dibuat dari Salin Chat WhatsApp',
+        catatanPembeli: catatan ? `${catatan} (Via Salin Chat WhatsApp)` : 'Dibuat dari Salin Chat WhatsApp',
+        tipePengiriman: tipePengiriman,
+        opsiPengambilan: tipePengiriman,
+        metodePembayaran: 'COD (Bayar di Tempat)',
+        items: parsedItems,
+        totalHarga: grandTotal,
+        ongkir: 0,
+        totalBayar: grandTotal,
+        status: 'Menunggu Konfirmasi'
+      };
+
+      if (onAddManualOrder) {
+        onAddManualOrder(newManualOrder);
+      } else if (onUpdateOrder) {
+        onUpdateOrder(newManualOrder);
+      }
+
+      setWhatsAppText('');
+      setWhatsAppParseError('');
+      setIsWhatsAppImportOpen(false);
+    } catch (err: any) {
+      setWhatsAppParseError(`Gagal membaca format pesan: ${err.message}`);
+    }
+  };
 
   // State for SRC Masngud Branded Delete Order Confirmation Modal
   const [deleteConfirmModal, setDeleteConfirmModal] = useState<{
@@ -376,10 +542,45 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
             <p className="text-xs text-slate-500">
               Terima pesanan online dari pembeli sekitar toko dan selesaikan dengan otomatis potong stok.
             </p>
+            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 shadow-2xs">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>Firebase Cloud Sinkron:</span>
+                <span className="font-mono font-black">{activeStoreId}</span>
+              </span>
+            </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          <button
+            type="button"
+            onClick={handleRefreshCloud}
+            disabled={isRefreshingCloud}
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs active:scale-95 ${
+              isRefreshingCloud
+                ? 'bg-blue-100 border-blue-300 text-blue-700'
+                : 'bg-blue-600 hover:bg-blue-700 text-white border-blue-600'
+            }`}
+            title="Tarik & Cek Seluruh Pesanan Terbaru dari Firebase Cloud Sekarang"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshingCloud ? 'animate-spin' : ''}`} />
+            <span>{isRefreshingCloud ? 'Memeriksa Cloud...' : 'Tarik Pesanan Cloud'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setWhatsAppParseError('');
+              setIsWhatsAppImportOpen(true);
+            }}
+            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs active:scale-95"
+            title="Tempel teks chat pesanan dari WhatsApp pelanggan untuk otomatis dimasukkan ke daftar pesanan"
+          >
+            <FileText className="w-4 h-4" />
+            <span>Tempel dari WhatsApp</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setIsPromoBannerModalOpen(true)}
@@ -1927,6 +2128,95 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
                 className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-extrabold rounded-xl transition-colors cursor-pointer"
               >
                 Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL TEMPEL PESANAN DARI WHATSAPP */}
+      {isWhatsAppImportOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-zinc-900 rounded-3xl overflow-hidden max-w-lg w-full shadow-2xl border border-slate-100 dark:border-zinc-800 animate-in zoom-in-95 duration-200">
+            <div className="bg-gradient-to-r from-emerald-600 via-emerald-700 to-teal-800 text-white p-5 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-white text-emerald-700 flex items-center justify-center font-black text-base shadow-md shrink-0">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm">
+                    Tempel Pesanan dari WhatsApp
+                  </h3>
+                  <p className="text-[11px] text-emerald-100">
+                    Otomatis membaca Nama, HP, Alamat, dan Barang Belanjaan
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsWhatsAppImportOpen(false)}
+                className="p-1.5 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-3.5 text-left">
+              <p className="text-xs text-slate-600 dark:text-zinc-300">
+                Jika pelanggan mengirim pesanan via chat WhatsApp pribadi/grup, salin teks pesannya dan tempel di bawah ini:
+              </p>
+
+              <textarea
+                rows={7}
+                placeholder={`Contoh teks chat WhatsApp:\n*PESANAN BARU*\nNama: Bu Siti\nNo HP: 081234567890\nAlamat: RT 03 RW 01 Depan Masjid\nItem:\n- Beras Ramos 5kg (x1) - Rp 70.000\n- Minyak Goreng 2L (x1) - Rp 35.000\nTotal: Rp 105.000\nCatatan: Tolong diantar sekarang ya mas`}
+                value={whatsAppText}
+                onChange={(e) => setWhatsAppText(e.target.value)}
+                className="w-full p-3 bg-slate-50 dark:bg-zinc-800/80 border border-slate-200 dark:border-zinc-700 rounded-2xl text-xs font-mono text-slate-800 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 leading-relaxed"
+              />
+
+              {whatsAppParseError && (
+                <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 rounded-xl text-xs text-red-700 dark:text-red-300 font-medium">
+                  ⚠️ {whatsAppParseError}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWhatsAppText(`*PESANAN BARU VIA WHATSAPP*\nNama: Bu Siti Rahayu\nNo HP: 081298765432\nAlamat: Jl. Melati Blok C No. 5\nItem:\n- Beras Premium 5kg (x1) - Rp 70.000\n- Gula Pasir 1kg (x2) - Rp 17.500\nTotal: Rp 105.000\nCatatan: Mohon diantar sebelum jam 5 sore`);
+                  }}
+                  className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer"
+                >
+                  📝 Isi Contoh Teks
+                </button>
+                {whatsAppText && (
+                  <button
+                    type="button"
+                    onClick={() => setWhatsAppText('')}
+                    className="text-[11px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    Hapus Teks
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 dark:bg-zinc-800/40 border-t border-slate-100 dark:border-zinc-800 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsWhatsAppImportOpen(false)}
+                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-zinc-700 text-slate-700 dark:text-zinc-200 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleImportWhatsAppOrder}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+              >
+                <Check className="w-4 h-4" />
+                <span>Simpan Pesanan ke Kasir</span>
               </button>
             </div>
           </div>

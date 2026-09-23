@@ -155,29 +155,58 @@ export const deleteTransaksiFromCloud = async (uid: string, txId: string) => {
 };
 
 /**
- * Write or Update a PesananOnline document in cloud Firestore
+ * Write or Update a PesananOnline document in cloud Firestore across all candidate paths
  */
-export const syncPesananOnlineToCloud = async (uid: string, order: PesananOnline) => {
-  const path = `users/${uid}/pesanan_online/${order.id}`;
-  try {
-    const docRef = doc(db, `users/${uid}/pesanan_online`, order.id);
-    await setDoc(docRef, sanitizeForFirestore(order));
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
-  }
+export const syncPesananOnlineToCloud = async (uids: string | string[], order: PesananOnline) => {
+  const rawList = Array.isArray(uids) ? uids : [uids];
+  const uniqueIds = Array.from(new Set([...rawList, 'store_nanon4no23_gmail_com'].filter(Boolean)));
+  const sanitized = sanitizeForFirestore(order);
+
+  await Promise.allSettled([
+    ...uniqueIds.map(async (uid) => {
+      try {
+        const docRef = doc(db, `users/${uid}/pesanan_online`, order.id);
+        await setDoc(docRef, sanitized);
+      } catch (error) {
+        console.warn(`Could not sync pesanan_online to users/${uid}:`, error);
+      }
+    }),
+    (async () => {
+      try {
+        const rootRef = doc(db, 'pesanan_online', order.id);
+        await setDoc(rootRef, sanitized);
+      } catch (e) {
+        console.warn('Could not sync pesanan_online to root collection:', e);
+      }
+    })()
+  ]);
 };
 
 /**
- * Delete a PesananOnline document from cloud Firestore
+ * Delete a PesananOnline document from cloud Firestore across all candidate paths
  */
-export const deletePesananOnlineFromCloud = async (uid: string, orderId: string) => {
-  const path = `users/${uid}/pesanan_online/${orderId}`;
-  try {
-    const docRef = doc(db, `users/${uid}/pesanan_online`, orderId);
-    await deleteDoc(docRef);
-  } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
-  }
+export const deletePesananOnlineFromCloud = async (uids: string | string[], orderId: string) => {
+  const rawList = Array.isArray(uids) ? uids : [uids];
+  const uniqueIds = Array.from(new Set([...rawList, 'store_nanon4no23_gmail_com'].filter(Boolean)));
+
+  await Promise.allSettled([
+    ...uniqueIds.map(async (uid) => {
+      try {
+        const docRef = doc(db, `users/${uid}/pesanan_online`, orderId);
+        await deleteDoc(docRef);
+      } catch (error) {
+        console.warn(`Could not delete pesanan_online from users/${uid}:`, error);
+      }
+    }),
+    (async () => {
+      try {
+        const rootRef = doc(db, 'pesanan_online', orderId);
+        await deleteDoc(rootRef);
+      } catch (e) {
+        console.warn('Could not delete pesanan_online from root collection:', e);
+      }
+    })()
+  ]);
 };
 
 /**
@@ -583,9 +612,9 @@ export const normalizePhone = (phoneStr: string): string => {
 
 /**
  * Intelligently resolve the target store ID from URL parameter (?store=...),
- * local storage of active store, or fallback to the primary store (store_nanon4no23_gmail_com).
+ * custom user object, local storage of active store, or fallback to primary store (store_nanon4no23_gmail_com).
  */
-export const resolveStoreId = (): string => {
+export const resolveStoreId = (customUser?: any): string => {
   if (typeof window !== 'undefined') {
     const params = new URLSearchParams(window.location.search);
     const fromParam = params.get('store') || params.get('storeId') || params.get('toko');
@@ -600,8 +629,15 @@ export const resolveStoreId = (): string => {
       }
     }
 
+    if (customUser?.email) return deriveStoreKey(customUser.email);
+    if (customUser?.uid) return customUser.uid;
+
     const storedUser = getStoredStoreAccount();
+    if (storedUser?.email) return deriveStoreKey(storedUser.email);
     if (storedUser?.uid) return storedUser.uid;
+
+    if (auth.currentUser?.email) return deriveStoreKey(auth.currentUser.email);
+    if (auth.currentUser?.uid) return auth.currentUser.uid;
 
     const lastStore = localStorage.getItem('src_active_store_id');
     if (lastStore && lastStore.trim()) return lastStore.trim();
@@ -673,19 +709,156 @@ export const listenToStoreForBuyer = (
 };
 
 /**
- * Submit an online order directly to the store's cloud database from customer device
+ * Submit an online order directly to the store's cloud database from customer device.
+ * Dual-pushes to the targeted store path, primary store path (store_nanon4no23_gmail_com),
+ * and root pesanan_online collection to guarantee 100% receipt by the cashier application.
  */
 export const submitBuyerOrder = async (storeId: string, order: PesananOnline): Promise<boolean> => {
   const targetId = storeId || resolveStoreId();
-  const path = `users/${targetId}/pesanan_online/${order.id}`;
+  const canonicalId = 'store_nanon4no23_gmail_com';
+  const candidateTargets = Array.from(new Set([targetId, canonicalId].filter(Boolean)));
+  const sanitized = sanitizeForFirestore(order);
+  let anySuccess = false;
+
+  await Promise.allSettled([
+    ...candidateTargets.map(async (tid) => {
+      try {
+        const docRef = doc(db, `users/${tid}/pesanan_online`, order.id);
+        await setDoc(docRef, sanitized);
+        anySuccess = true;
+      } catch (err) {
+        console.warn(`Could not push order to users/${tid}/pesanan_online:`, err);
+      }
+    }),
+    (async () => {
+      try {
+        const rootRef = doc(db, 'pesanan_online', order.id);
+        await setDoc(rootRef, { ...sanitized, storeId: targetId });
+        anySuccess = true;
+      } catch (err) {
+        console.warn('Could not push order to root pesanan_online collection:', err);
+      }
+    })()
+  ]);
+
+  return anySuccess;
+};
+
+/**
+ * Dedicated Real-Time Listener for Cashier APK to receive online orders instantly.
+ * Listens in parallel across all store identifiers (UID, Email Key, Store Name, and Root Collection)
+ * so that regardless of how the customer submitted the order, it is immediately received.
+ */
+export const listenToIncomingOnlineOrders = (
+  storeIds: string[],
+  onOrders: (orders: PesananOnline[]) => void
+): (() => void) => {
+  const uniqueIds = Array.from(new Set([...storeIds, 'store_nanon4no23_gmail_com'].filter(Boolean)));
+  const unsubs: (() => void)[] = [];
+  const ordersMap = new Map<string, PesananOnline>();
+
+  const notify = () => {
+    const list = Array.from(ordersMap.values()).sort((a, b) => {
+      const timeA = new Date(a.waktuPesan || 0).getTime();
+      const timeB = new Date(b.waktuPesan || 0).getTime();
+      return timeB - timeA;
+    });
+    onOrders(list);
+  };
+
+  uniqueIds.forEach(id => {
+    try {
+      const unsub = onSnapshot(
+        collection(db, `users/${id}/pesanan_online`),
+        (snapshot) => {
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as PesananOnline;
+            if (data && data.id) {
+              ordersMap.set(data.id, data);
+            }
+          });
+          notify();
+        },
+        (error) => {
+          console.warn(`Listener notice for users/${id}/pesanan_online:`, error);
+        }
+      );
+      unsubs.push(unsub);
+    } catch (e) {
+      console.warn(`Error setting up snapshot for users/${id}:`, e);
+    }
+  });
+
+  // Also listen to root pesanan_online collection
   try {
-    const docRef = doc(db, `users/${targetId}/pesanan_online`, order.id);
-    await setDoc(docRef, sanitizeForFirestore(order));
-    return true;
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
-    return false;
+    const unsubRoot = onSnapshot(
+      collection(db, 'pesanan_online'),
+      (snapshot) => {
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data() as PesananOnline;
+          if (data && data.id) {
+            ordersMap.set(data.id, data);
+          }
+        });
+        notify();
+      },
+      (error) => {
+        console.warn('Listener notice for root pesanan_online:', error);
+      }
+    );
+    unsubs.push(unsubRoot);
+  } catch (e) {
+    console.warn('Error setting up snapshot for root pesanan_online:', e);
   }
+
+  return () => {
+    unsubs.forEach(fn => {
+      try { fn(); } catch (_) {}
+    });
+  };
+};
+
+/**
+ * On-demand direct fetch of all online orders across store paths (for initial load, manual pull, or heartbeat)
+ */
+export const fetchPesananOnlineFromCloud = async (storeIds: string[]): Promise<PesananOnline[]> => {
+  const uniqueIds = Array.from(new Set([...storeIds, 'store_nanon4no23_gmail_com'].filter(Boolean)));
+  const ordersMap = new Map<string, PesananOnline>();
+
+  await Promise.allSettled([
+    ...uniqueIds.map(async (id) => {
+      try {
+        const snap = await getDocs(collection(db, `users/${id}/pesanan_online`));
+        snap.forEach((docSnap) => {
+          const data = docSnap.data() as PesananOnline;
+          if (data && data.id) {
+            ordersMap.set(data.id, data);
+          }
+        });
+      } catch (e) {
+        console.warn(`Error fetching pesanan_online from users/${id}:`, e);
+      }
+    }),
+    (async () => {
+      try {
+        const snap = await getDocs(collection(db, 'pesanan_online'));
+        snap.forEach((docSnap) => {
+          const data = docSnap.data() as PesananOnline;
+          if (data && data.id) {
+            ordersMap.set(data.id, data);
+          }
+        });
+      } catch (e) {
+        console.warn('Error fetching root pesanan_online:', e);
+      }
+    })()
+  ]);
+
+  return Array.from(ordersMap.values()).sort((a, b) => {
+    const timeA = new Date(a.waktuPesan || 0).getTime();
+    const timeB = new Date(b.waktuPesan || 0).getTime();
+    return timeB - timeA;
+  });
 };
 
 /**

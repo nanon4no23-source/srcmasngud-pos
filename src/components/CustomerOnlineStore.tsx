@@ -5,7 +5,9 @@ import {
   CheckCircle2, AlertCircle, MessageCircle, Trash2,
   ChevronRight, ChevronLeft, QrCode, CreditCard, DollarSign, Send, Info,
   User, UserCheck, Key, LogOut, ShieldCheck, Award,
-  Camera, Copy, Check, Sparkles, Tag, ArrowRight, ArrowUp, Loader2, Cloud
+  Camera, Copy, Check, Sparkles, Tag, ArrowRight, ArrowUp, Loader2, Cloud,
+  Clock, Package, RefreshCw, Receipt, RotateCcw, ExternalLink, Printer,
+  CheckSquare, Square, ClipboardCheck
 } from 'lucide-react';
 import CameraScanner from './CameraScanner';
 import { prepareSearchIndex, searchProductsByPrefix } from '../utils/searchHelper';
@@ -15,7 +17,9 @@ import {
   submitBuyerOrder, 
   registerBuyerMember, 
   searchMemberInCloud,
-  normalizePhone
+  normalizePhone,
+  listenToIncomingOnlineOrders,
+  fetchPesananOnlineFromCloud
 } from '../utils/firestoreSync';
 import { matchMemberBarcode, getEan8Digits, getEan13Digits } from '../utils/printHelper';
 
@@ -58,8 +62,31 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
   const [cloudBarang, setCloudBarang] = useState<ItemBarang[]>(initialBarang);
   const [cloudPelanggan, setCloudPelanggan] = useState<Pelanggan[]>(initialPelanggan);
   const [cloudConfig, setCloudConfig] = useState<ConfigStruk>(initialConfig);
-  const [isCloudConnected, setIsCloudConnected] = useState<boolean>(false);
+  const [isCloudConnected, setIsCloudConnected] = useState<boolean>(() => {
+    return typeof navigator !== 'undefined' ? navigator.onLine : true;
+  });
+  const [isBrowserOnline, setIsBrowserOnline] = useState<boolean>(() => {
+    return typeof navigator !== 'undefined' ? navigator.onLine : true;
+  });
   const [isSearchingCloudMember, setIsSearchingCloudMember] = useState<boolean>(false);
+
+  // Monitor browser network connectivity
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsBrowserOnline(true);
+      setIsCloudConnected(true);
+    };
+    const handleOffline = () => {
+      setIsBrowserOnline(false);
+      setIsCloudConnected(false);
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // Real-time Cloud Firestore Listener for public customer online store
   useEffect(() => {
@@ -455,7 +482,403 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
   // Order completed modal state
   const [placedOrder, setPlacedOrder] = useState<PesananOnline | null>(null);
 
+  // Status Pesanan Saya & Riwayat Pesanan States
+  const [cloudOrders, setCloudOrders] = useState<PesananOnline[]>(() => {
+    const list: PesananOnline[] = [...(existingOrders || [])];
+    if (typeof window !== 'undefined') {
+      try {
+        const savedFullStr = localStorage.getItem('src_online_placed_orders_full');
+        if (savedFullStr) {
+          const arr = JSON.parse(savedFullStr);
+          if (Array.isArray(arr)) {
+            arr.forEach((o: PesananOnline) => {
+              if (o && o.id && !list.some(item => item.id === o.id)) {
+                list.push(o);
+              }
+            });
+          }
+        }
+      } catch (e) {}
+    }
+    return list;
+  });
+  const [isOrderHistoryOpen, setIsOrderHistoryOpen] = useState<boolean>(false);
+  const [orderFilterTab, setOrderFilterTab] = useState<'semua' | 'aktif' | 'selesai' | 'dibatalkan'>('semua');
+  const [selectedOrderForReceipt, setSelectedOrderForReceipt] = useState<PesananOnline | null>(null);
+  const [isRefreshingOrders, setIsRefreshingOrders] = useState<boolean>(false);
+  const [orderSearchLookup, setOrderSearchLookup] = useState<string>('');
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
+  const [orderToastMessage, setOrderToastMessage] = useState<string | null>(null);
+
+  // Crosscheck verification state for checking off items upon pickup or delivery
+  const [crosscheckedItems, setCrosscheckedItems] = useState<Record<string, boolean>>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('src_buyer_crosscheck_items');
+        return saved ? JSON.parse(saved) : {};
+      } catch (e) {
+        return {};
+      }
+    }
+    return {};
+  });
+
+  const toggleCrosscheckItem = (orderId: string, itemIdx: number) => {
+    const key = `${orderId}_${itemIdx}`;
+    setCrosscheckedItems(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      try {
+        localStorage.setItem('src_buyer_crosscheck_items', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+  };
+
+  const markAllOrderCrosschecked = (orderId: string, itemsCount: number, status: boolean) => {
+    setCrosscheckedItems(prev => {
+      const next = { ...prev };
+      for (let i = 0; i < itemsCount; i++) {
+        next[`${orderId}_${i}`] = status;
+      }
+      try {
+        localStorage.setItem('src_buyer_crosscheck_items', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+  };
+
+  // Real-time Cloud Listener for Online Orders so buyer status stays 100% in sync with Cashier
+  useEffect(() => {
+    if (!activeStoreId) return;
+
+    // 1. Snapshot Listener
+    const unsub = listenToIncomingOnlineOrders([activeStoreId], (incomingList) => {
+      if (incomingList && incomingList.length > 0) {
+        setCloudOrders(prev => {
+          const map = new Map<string, PesananOnline>();
+          prev.forEach(o => map.set(o.id, o));
+          incomingList.forEach(o => map.set(o.id, o));
+          return Array.from(map.values()).sort((a, b) => {
+            const timeA = a.timestamp || new Date(a.waktuPesan || a.waktu || 0).getTime() || 0;
+            const timeB = b.timestamp || new Date(b.waktuPesan || b.waktu || 0).getTime() || 0;
+            return timeB - timeA;
+          });
+        });
+      }
+    });
+
+    // 2. Immediate on-demand fetch
+    fetchPesananOnlineFromCloud([activeStoreId]).then((fetched) => {
+      if (fetched && fetched.length > 0) {
+        setCloudOrders(prev => {
+          const map = new Map<string, PesananOnline>();
+          prev.forEach(o => map.set(o.id, o));
+          fetched.forEach(o => map.set(o.id, o));
+          return Array.from(map.values()).sort((a, b) => {
+            const timeA = a.timestamp || new Date(a.waktuPesan || a.waktu || 0).getTime() || 0;
+            const timeB = b.timestamp || new Date(b.waktuPesan || b.waktu || 0).getTime() || 0;
+            return timeB - timeA;
+          });
+        });
+      }
+    }).catch(e => console.warn('Fetch online orders initial error:', e));
+
+    // 3. Heartbeat polling every 15 seconds to ensure synchronization even in restrictive webviews
+    const interval = setInterval(() => {
+      fetchPesananOnlineFromCloud([activeStoreId]).then((fresh) => {
+        if (fresh && fresh.length > 0) {
+          setCloudOrders(prev => {
+            const map = new Map<string, PesananOnline>();
+            prev.forEach(o => map.set(o.id, o));
+            fresh.forEach(o => map.set(o.id, o));
+            return Array.from(map.values()).sort((a, b) => {
+              const timeA = a.timestamp || new Date(a.waktuPesan || a.waktu || 0).getTime() || 0;
+              const timeB = b.timestamp || new Date(b.waktuPesan || b.waktu || 0).getTime() || 0;
+              return timeB - timeA;
+            });
+          });
+        }
+      }).catch(() => {});
+    }, 15000);
+
+    return () => {
+      unsub();
+      clearInterval(interval);
+    };
+  }, [activeStoreId]);
+
+  // Keep synced with incoming props if changed
+  useEffect(() => {
+    if (existingOrders && existingOrders.length > 0) {
+      setCloudOrders(prev => {
+        const map = new Map<string, PesananOnline>();
+        prev.forEach(o => map.set(o.id, o));
+        existingOrders.forEach(o => map.set(o.id, o));
+        return Array.from(map.values()).sort((a, b) => {
+          const timeA = a.timestamp || new Date(a.waktuPesan || a.waktu || 0).getTime() || 0;
+          const timeB = b.timestamp || new Date(b.waktuPesan || b.waktu || 0).getTime() || 0;
+          return timeB - timeA;
+        });
+      });
+    }
+  }, [existingOrders]);
+
+  // Handle Manual Refresh of Orders
+  const handleRefreshOrders = async () => {
+    setIsRefreshingOrders(true);
+    try {
+      const fresh = await fetchPesananOnlineFromCloud([activeStoreId]);
+      if (fresh && fresh.length > 0) {
+        setCloudOrders(prev => {
+          const map = new Map<string, PesananOnline>();
+          prev.forEach(o => map.set(o.id, o));
+          fresh.forEach(o => map.set(o.id, o));
+          return Array.from(map.values()).sort((a, b) => {
+            const timeA = a.timestamp || new Date(a.waktuPesan || a.waktu || 0).getTime() || 0;
+            const timeB = b.timestamp || new Date(b.waktuPesan || b.waktu || 0).getTime() || 0;
+            return timeB - timeA;
+          });
+        });
+        setOrderToastMessage('✅ Status pesanan berhasil diperbarui dari kasir cloud!');
+      } else {
+        setOrderToastMessage('ℹ️ Belum ada update status baru dari kasir.');
+      }
+    } catch (e) {
+      console.warn('Refresh orders error:', e);
+      setOrderToastMessage('⚠️ Gagal menyegarkan status pesanan. Periksa koneksi internet.');
+    } finally {
+      setTimeout(() => {
+        setIsRefreshingOrders(false);
+        setTimeout(() => setOrderToastMessage(null), 3000);
+      }, 600);
+    }
+  };
+
+  // Re-order items back into cart
+  const handleReorderItems = (order: PesananOnline) => {
+    let addedCount = 0;
+    const newCart = { ...cartItems };
+
+    order.items.forEach((item) => {
+      const prod = barang.find(b => b.id === item.itemId || b.nama.toLowerCase().trim() === item.nama.toLowerCase().trim());
+      if (prod) {
+        const existingCartItem = newCart[prod.id];
+        const currentQty = existingCartItem?.qty || 0;
+        newCart[prod.id] = {
+          qty: currentQty + (item.qty || 1),
+          selectedUnitId: item.unitId || existingCartItem?.selectedUnitId
+        };
+        addedCount += (item.qty || 1);
+      }
+    });
+
+    if (addedCount > 0) {
+      setCartItems(newCart);
+      setOrderToastMessage(`🛒 Berhasil menambahkan ${addedCount} barang ke keranjang belanja!`);
+      setTimeout(() => setOrderToastMessage(null), 3000);
+      setIsOrderHistoryOpen(false);
+      setIsCartOpen(true);
+    } else {
+      setOrderToastMessage('⚠️ Produk dari pesanan ini sedang tidak ada di katalog.');
+      setTimeout(() => setOrderToastMessage(null), 3000);
+    }
+  };
+
+  // Generate Inquiry WhatsApp Message for an order
+  const getOrderInquiryWhatsAppUrl = (order: PesananOnline) => {
+    const rawPhone = config.noHp || '085876315801';
+    let formattedPhone = rawPhone.replace(/[^0-9]/g, '');
+    if (formattedPhone.startsWith('0')) {
+      formattedPhone = '62' + formattedPhone.slice(1);
+    }
+
+    const message = `Halo ${config.namaToko || 'Toko SRC'} 🙏
+Saya *${order.namaPembeli}* (${loggedInMember ? `Member: ${formatDisplayMemberId(loggedInMember)}` : `No. HP: ${order.teleponPembeli}`}).
+
+Ingin menanyakan status pesanan online saya:
+🧾 *No. Pesanan:* ${order.id}
+⏰ *Waktu Pesan:* ${order.waktu || order.waktuPesan || '-'}
+📦 *Status di Sistem:* ${order.status}
+💰 *Total Bayar:* ${formatRp(order.totalBayar)}
+🚚 *Pengiriman:* ${order.tipePengiriman}${order.alamatPembeli ? ` (${order.alamatPembeli})` : ''}
+
+Apakah pesanan saya sudah selesai diproses dan siap dikirim / diambil? Terima kasih! 🙏`;
+
+    return `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
+  };
+
+  // Accessible Buyer & Member Orders (Strictly isolated by member account)
+  const buyerOrders = useMemo(() => {
+    const map = new Map<string, PesananOnline>();
+
+    // 1. Local saved full orders from device
+    if (typeof window !== 'undefined') {
+      try {
+        const savedFullStr = localStorage.getItem('src_online_placed_orders_full');
+        if (savedFullStr) {
+          const arr = JSON.parse(savedFullStr);
+          if (Array.isArray(arr)) {
+            arr.forEach((o: PesananOnline) => {
+              if (o && o.id) map.set(o.id, o);
+            });
+          }
+        }
+      } catch (e) {}
+    }
+
+    // 2. Cloud and prop orders from store
+    (cloudOrders || []).forEach(o => {
+      if (o && o.id) map.set(o.id, o);
+    });
+
+    const allList = Array.from(map.values());
+
+    // 3. Filter strictly by member ownership (no other member's orders can ever leak)
+    const memberFiltered = allList.filter(o => {
+      if (!o) return false;
+
+      // When logged in as Member: ONLY show orders belonging to this member!
+      if (loggedInMember) {
+        const currentMemberId = (loggedInMember.id || '').trim().toLowerCase();
+        const currentDisplayId = formatDisplayMemberId(loggedInMember).trim().toLowerCase();
+        const currentMemberName = (loggedInMember.nama || '').trim().toLowerCase();
+        const currentMemberPhone = normalizePhone(loggedInMember.telepon || '');
+
+        // Check if order has explicit memberId
+        if (o.memberId) {
+          const oMid = o.memberId.trim().toLowerCase();
+          if (oMid === currentMemberId || oMid === currentDisplayId) return true;
+          // Belongs to a different member account!
+          return false;
+        }
+
+        // Check if order has explicit idMember
+        if (o.idMember) {
+          const oIdM = o.idMember.trim().toLowerCase();
+          if (oIdM === currentMemberId || oIdM === currentDisplayId || oIdM.includes(currentMemberId)) return true;
+          // Belongs to a different member account!
+          return false;
+        }
+
+        // Check buyer name: MUST match current logged in member's name!
+        const oBuyerName = (o.namaPembeli || '').trim().toLowerCase();
+        if (currentMemberName && oBuyerName) {
+          if (oBuyerName === currentMemberName) return true;
+          // Explicitly different name (e.g. Lionel vs Tamir masjid) -> REJECT!
+          return false;
+        }
+
+        // Check phone if member has valid phone (>= 6 digits)
+        if (currentMemberPhone && currentMemberPhone.length >= 6 && o.teleponPembeli) {
+          const oPhone = normalizePhone(o.teleponPembeli);
+          if (oPhone && (oPhone === currentMemberPhone || oPhone.endsWith(currentMemberPhone.slice(-8)) || currentMemberPhone.endsWith(oPhone.slice(-8)))) {
+            if (!oBuyerName || oBuyerName === currentMemberName) {
+              return true;
+            }
+          }
+        }
+
+        // Strictly do not show other people's orders
+        return false;
+      }
+
+      // When NOT logged in as member (Guest / Tamu):
+      // Must not belong to any registered member account
+      if (o.memberId || o.idMember) {
+        return false;
+      }
+
+      // Show guest orders placed on this specific device
+      let localSavedIds = new Set<string>();
+      if (typeof window !== 'undefined') {
+        try {
+          const savedIdsStr = localStorage.getItem('src_online_placed_order_ids');
+          if (savedIdsStr) {
+            const arr = JSON.parse(savedIdsStr);
+            if (Array.isArray(arr)) arr.forEach(id => localSavedIds.add(id));
+          }
+        } catch (e) {}
+      }
+
+      if (localSavedIds.has(o.id)) return true;
+
+      return false;
+    });
+
+    // 4. Apply search query lookup ONLY on the member's own filtered orders!
+    const lookupQuery = orderSearchLookup.trim().toLowerCase();
+    const cleanLookupPhone = normalizePhone(orderSearchLookup);
+
+    let resultList = memberFiltered;
+    if (lookupQuery) {
+      resultList = memberFiltered.filter(o => {
+        // Search by No. Pesanan
+        if (o.id && o.id.toLowerCase().includes(lookupQuery)) return true;
+        // Search by Nama Barang
+        if (o.items && o.items.some(it => it.nama.toLowerCase().includes(lookupQuery))) return true;
+        // Search by Status Pesanan
+        if (o.status && o.status.toLowerCase().includes(lookupQuery)) return true;
+        // Search by Tanggal / Waktu
+        if ((o.waktu || o.waktuPesan || '').toLowerCase().includes(lookupQuery)) return true;
+        // Search by Catatan
+        if (o.catatan && o.catatan.toLowerCase().includes(lookupQuery)) return true;
+        // Search by No. HP jika cocok
+        if (o.teleponPembeli && cleanLookupPhone && normalizePhone(o.teleponPembeli).includes(cleanLookupPhone)) return true;
+        return false;
+      });
+    }
+
+    return resultList.sort((a, b) => {
+      const timeA = a.timestamp || new Date(a.waktuPesan || a.waktu || 0).getTime() || 0;
+      const timeB = b.timestamp || new Date(b.waktuPesan || b.waktu || 0).getTime() || 0;
+      return timeB - timeA;
+    });
+  }, [loggedInMember, cloudOrders, orderSearchLookup]);
+
+  const activeOrdersCount = useMemo(() => {
+    return buyerOrders.filter(o => o.status !== 'Selesai' && o.status !== 'Dibatalkan').length;
+  }, [buyerOrders]);
+
+  const filteredOrders = useMemo(() => {
+    if (orderFilterTab === 'aktif') {
+      return buyerOrders.filter(o => o.status !== 'Selesai' && o.status !== 'Dibatalkan');
+    }
+    if (orderFilterTab === 'selesai') {
+      return buyerOrders.filter(o => o.status === 'Selesai');
+    }
+    if (orderFilterTab === 'dibatalkan') {
+      return buyerOrders.filter(o => o.status === 'Dibatalkan');
+    }
+    return buyerOrders;
+  }, [buyerOrders, orderFilterTab]);
+
   const isStoreOpen = config.tokoOnlineAktif !== false; // Default true unless explicitly closed
+  // Disguised store online/offline status (replaces technical database cloud status)
+  const isOnlineStatus = isBrowserOnline && isCloudConnected && isStoreOpen;
+
+  const storeOperatingHours = useMemo(() => {
+    return (config as any)?.jamBuka || (config as any)?.jamOperasional || '07:00 - 21:00 WIB';
+  }, [config]);
+
+  const whatsappNumber = useMemo(() => {
+    const raw = config.nomorWaToko || config.noHp || config.karyawan1 || '085876315801';
+    let formatted = raw.replace(/[^0-9]/g, '');
+    if (formatted.startsWith('0')) {
+      formatted = '62' + formatted.slice(1);
+    }
+    return formatted;
+  }, [config.nomorWaToko, config.noHp, config.karyawan1]);
+
+  const displayWhatsAppNumber = useMemo(() => {
+    return config.nomorWaToko || config.noHp || config.karyawan1 || '0858-7631-5801';
+  }, [config.nomorWaToko, config.noHp, config.karyawan1]);
+
+  const whatsappOrderGeneralUrl = useMemo(() => {
+    const nama = loggedInMember ? loggedInMember.nama : (customerName || 'Pelanggan');
+    const msg = `Halo ${config.namaToko || 'Toko SRC'} 🙏\nSaya *${nama}* ingin memesan belanjaan online via WhatsApp toko. Mohon informasi ketersediaan barang ya Kak, terima kasih!`;
+    return `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(msg)}`;
+  }, [whatsappNumber, config.namaToko, loggedInMember, customerName]);
+
   const minOrder = config.minOrderDelivery || 0;
   const deliveryFee = deliveryType === 'Pesan Antar' ? (config.ongkirDelivery || 5000) : 0;
 
@@ -471,7 +894,7 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
 
   // Handle Mobile / Browser Back Button (popstate) safely
   useEffect(() => {
-    const isAnyModalOpen = isCartOpen || !!selectedPromoModal || isDigitalCardOpen || isMemberCardScannerOpen || isMemberModalOpen;
+    const isAnyModalOpen = isCartOpen || !!selectedPromoModal || isDigitalCardOpen || isMemberCardScannerOpen || isMemberModalOpen || isOrderHistoryOpen || !!selectedOrderForReceipt;
 
     if (isAnyModalOpen) {
       try {
@@ -481,6 +904,8 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
 
     const handlePopState = () => {
       // 1. Close open modal first if active
+      if (selectedOrderForReceipt) { setSelectedOrderForReceipt(null); return; }
+      if (isOrderHistoryOpen) { setIsOrderHistoryOpen(false); return; }
       if (isCartOpen) { setIsCartOpen(false); return; }
       if (selectedPromoModal) { setSelectedPromoModal(null); return; }
       if (isDigitalCardOpen) { setIsDigitalCardOpen(false); return; }
@@ -500,7 +925,9 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
     selectedPromoModal,
     isDigitalCardOpen,
     isMemberCardScannerOpen,
-    isMemberModalOpen
+    isMemberModalOpen,
+    isOrderHistoryOpen,
+    selectedOrderForReceipt
   ]);
 
   // Pre-indexed search cache for online catalog
@@ -676,25 +1103,40 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
         day: '2-digit', month: 'short', year: 'numeric',
         hour: '2-digit', minute: '2-digit'
       }),
+      waktuPesan: new Date().toISOString(),
       timestamp: Date.now(),
       namaPembeli: finalName,
       teleponPembeli: finalPhone,
       alamatPembeli: deliveryType === 'Pesan Antar' ? customerAddress.trim() : undefined,
+      alamatPengiriman: deliveryType === 'Pesan Antar' ? customerAddress.trim() : undefined,
       tipePengiriman: deliveryType,
+      opsiPengambilan: deliveryType,
       catatan: orderNotes.trim() || undefined,
+      catatanPembeli: orderNotes.trim() || undefined,
       items: itemsPayload,
       totalHarga: cartSubtotal,
       ongkir: deliveryFee,
       totalBayar: grandTotal,
       metodePembayaran: paymentMethod,
-      status: 'Menunggu Konfirmasi'
+      status: 'Menunggu Konfirmasi',
+      memberId: loggedInMember?.id,
+      idMember: loggedInMember ? formatDisplayMemberId(loggedInMember) : undefined
     };
 
     onPlaceOrder(newOrder);
     setPlacedOrder(newOrder);
+    setCloudOrders(prev => [newOrder, ...prev.filter(o => o.id !== newOrder.id)]);
 
     // Directly push order to Firestore Cloud database so Cashier APK receives it instantly
-    submitBuyerOrder(activeStoreId, newOrder);
+    submitBuyerOrder(activeStoreId, newOrder).then((success) => {
+      if (success) {
+        console.log('✅ Pesanan online berhasil terkirim ke Cloud Firestore:', newOrder.id);
+      } else {
+        console.warn('⚠️ Peringatan: Pesanan tersimpan lokal, cadangan cloud sedang diproses.');
+      }
+    }).catch(err => {
+      console.warn('⚠️ Peringatan pengiriman pesanan cloud:', err);
+    });
 
     if (typeof window !== 'undefined') {
       try {
@@ -764,10 +1206,14 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
                   Yuk Belanja Online
                 </span>
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${
-                  isStoreOpen ? 'bg-emerald-500/20 text-emerald-100 border border-emerald-400/30' : 'bg-rose-950 text-rose-200 border border-rose-500/30'
+                  isOnlineStatus ? 'bg-emerald-500/20 text-emerald-100 border border-emerald-400/30' : 'bg-rose-950 text-rose-200 border border-rose-500/30'
                 }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${isStoreOpen ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
-                  {isStoreOpen ? 'Toko Buka' : 'Toko Tutup'}
+                  <span className={`w-1.5 h-1.5 rounded-full ${isOnlineStatus ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+                  {isOnlineStatus ? 'Online (Buka)' : 'Offline (Tutup)'}
+                </span>
+                <span className="hidden sm:inline-flex items-center gap-1 text-[10px] text-red-100 font-bold bg-black/25 px-2 py-0.5 rounded-full border border-white/10">
+                  <Clock className="w-3 h-3 text-amber-300" />
+                  <span>{storeOperatingHours}</span>
                 </span>
               </div>
               <h1 className="text-lg font-black tracking-tight mt-0.5 leading-tight">
@@ -810,6 +1256,20 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
                 <CreditCard className="w-3 h-3" />
                 <span>Kartu Member</span>
               </button>
+              <button
+                type="button"
+                onClick={() => setIsOrderHistoryOpen(true)}
+                className="px-2.5 py-0.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-black text-[10px] rounded-lg shadow-3xs transition-all cursor-pointer flex items-center gap-1.5 active:scale-95"
+                title="Lihat Riwayat & Status Pesanan Online Member"
+              >
+                <Clock className="w-3 h-3 text-amber-300" />
+                <span>Riwayat Pesanan</span>
+                {buyerOrders.length > 0 && (
+                  <span className="bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded-full font-black text-[9px] min-w-4 text-center">
+                    {buyerOrders.length}
+                  </span>
+                )}
+              </button>
             </div>
           ) : (
             <div className="flex items-center gap-2">
@@ -823,6 +1283,25 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
           )}
 
           <div className="flex items-center gap-2 ml-auto">
+            {/* TOMBOL STATUS PESANAN DI HEADER */}
+            <button
+              type="button"
+              onClick={() => setIsOrderHistoryOpen(true)}
+              className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/40 active:scale-95 text-[11px] font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-3xs"
+              title="Cek Status & Riwayat Pesanan Online"
+            >
+              <Package className="w-3.5 h-3.5 text-amber-300" />
+              <span>Status Pesanan</span>
+              {activeOrdersCount > 0 ? (
+                <span className="bg-red-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full animate-pulse">
+                  {activeOrdersCount}
+                </span>
+              ) : buyerOrders.length > 0 ? (
+                <span className="bg-slate-800 text-slate-300 text-[9px] font-extrabold px-1.5 py-0.2 rounded-full">
+                  {buyerOrders.length}
+                </span>
+              ) : null}
+            </button>
             <button
               type="button"
               onClick={() => loggedInMember ? handleMemberLogout() : setIsMemberModalOpen(true)}
@@ -842,6 +1321,25 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
             </button>
           </div>
         </div>
+
+        {/* STORE OFFLINE BANNER - INFORM CUSTOMER TO SEND ORDER VIA WHATSAPP */}
+        {!isOnlineStatus && (
+          <div className="bg-amber-400 text-slate-950 px-4 py-2 text-xs font-bold flex flex-wrap items-center justify-between gap-2 shadow-xs border-b border-amber-500">
+            <div className="flex items-center gap-2">
+              <MessageCircle className="w-4 h-4 text-emerald-950 shrink-0" />
+              <span>Toko sedang Offline. Anda tetap bisa memilih belanjaan dan kirim pesanan via WhatsApp kasir!</span>
+            </div>
+            <a
+              href={whatsappOrderGeneralUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-[11px] font-black flex items-center gap-1.5 ml-auto shadow-3xs cursor-pointer active:scale-95"
+            >
+              <MessageCircle className="w-3.5 h-3.5" />
+              <span>WhatsApp Kasir ({displayWhatsAppNumber})</span>
+            </a>
+          </div>
+        )}
 
         {/* INTERACTIVE PROMO BANNER CAROUSEL / SLIDER */}
         {activePromoBanners.length > 0 && (
@@ -1231,6 +1729,26 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
 
       {/* FLOATING ACTION BUTTONS AT BOTTOM RIGHT (POJOK KANAN BAWAH) */}
       <div className={`fixed right-4 z-40 flex flex-col items-end gap-2.5 transition-all duration-300 ${cartDetails.length > 0 && !isCartOpen ? 'bottom-22' : 'bottom-5'}`}>
+        {/* FLOATING BUTTON STATUS PESANAN */}
+        <button
+          type="button"
+          onClick={() => setIsOrderHistoryOpen(true)}
+          className="bg-slate-900/95 hover:bg-slate-900 text-white px-3.5 py-2.5 rounded-2xl shadow-2xl border border-slate-700/80 font-black text-xs flex items-center gap-2 transition-all cursor-pointer active:scale-90 hover:scale-105 backdrop-blur-md"
+          title="Buka Status & Riwayat Pesanan Online"
+        >
+          <Clock className="w-4 h-4 text-amber-400" />
+          <span>Status Pesanan</span>
+          {activeOrdersCount > 0 ? (
+            <span className="bg-red-600 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
+              {activeOrdersCount} aktif
+            </span>
+          ) : buyerOrders.length > 0 ? (
+            <span className="bg-slate-800 text-slate-300 text-[10px] font-extrabold px-1.5 py-0.5 rounded-full">
+              {buyerOrders.length}
+            </span>
+          ) : null}
+        </button>
+
         {/* FLOATING "KEMBALI KE ATAS" BUTTON WHEN SCROLLED DOWN */}
         {showScrollTop && (
           <button
@@ -1576,13 +2094,28 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
                 </div>
               </div>
 
+              {/* OFFLINE NOTICE IN CART */}
+              {!isOnlineStatus && (
+                <div className="p-3 bg-amber-50 border border-amber-300 rounded-2xl text-xs text-amber-950 flex items-start gap-2.5">
+                  <MessageCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5 flex-1">
+                    <p className="font-extrabold text-amber-900 text-xs">
+                      Toko Sedang Offline / Tutup
+                    </p>
+                    <p className="text-[11px] text-amber-800 leading-relaxed">
+                      Pesanan Anda akan dibuat dan dapat langsung Anda kirimkan ke WhatsApp kasir toko ({displayWhatsAppNumber}) agar langsung disiapkan!
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* SUBMIT BUTTON */}
               <button
                 type="submit"
                 className="w-full py-3.5 bg-red-600 hover:bg-red-700 text-white rounded-2xl font-black text-sm shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98"
               >
                 <Send className="w-4 h-4" />
-                <span>Kirim Pesanan Ke Toko</span>
+                <span>{isOnlineStatus ? 'Kirim Pesanan Ke Toko' : 'Kirim Pesanan (Lanjut WhatsApp)'}</span>
               </button>
             </form>
           </div>
@@ -1642,6 +2175,18 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
                 <MessageCircle className="w-4 h-4" />
                 <span>Kirim Konfirmasi via WhatsApp Toko</span>
               </a>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setPlacedOrder(null);
+                  setIsOrderHistoryOpen(true);
+                }}
+                className="w-full py-3 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-2xl font-extrabold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+              >
+                <Clock className="w-4 h-4 text-red-600" />
+                <span>Pantau Status Pesanan Saya (Sinkron Kasir)</span>
+              </button>
 
               <button
                 type="button"
@@ -1762,16 +2307,51 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
             {/* TAB 1: LOGIN (KAMERA SCAN BARCODE KARTU FISIK UNTUK PRIVASI & KEAMANAN) */}
             {memberModalTab === 'login' ? (
               <div className="space-y-4">
-                {/* CLOUD CONNECTION STATUS BADGE */}
-                <div className="flex items-center justify-between px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-[11px]">
-                  <span className="text-slate-500 font-semibold flex items-center gap-1.5">
-                    <Cloud className="w-3.5 h-3.5 text-red-600" />
-                    <span>Database Cloud Toko</span>
-                  </span>
-                  <span className="flex items-center gap-1 font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full text-[10px]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    Tersambung
-                  </span>
+                {/* JAM BUKA OPERASIONAL TOKO & STATUS ONLINE (PENYAMARAN DATA CLOUD TOKO) */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-[11px] shadow-3xs">
+                    <span className="text-slate-700 font-bold flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-red-600 shrink-0" />
+                      <span>Jam Buka Toko: {storeOperatingHours}</span>
+                    </span>
+                    {isOnlineStatus ? (
+                      <span className="flex items-center gap-1.5 font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-2.5 py-0.5 rounded-full text-[10px]">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Online
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 font-black text-rose-700 bg-rose-100 border border-rose-300 px-2.5 py-0.5 rounded-full text-[10px]">
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                        Offline
+                      </span>
+                    )}
+                  </div>
+
+                  {/* NOTIFIKASI OFFLINE: BERI TAHU BISA KIRIM PESANAN VIA WHATSAPP */}
+                  {!isOnlineStatus && (
+                    <div className="p-3 bg-amber-50/95 border border-amber-300/80 rounded-2xl text-xs text-amber-950 space-y-2 animate-in fade-in duration-200 shadow-3xs">
+                      <div className="flex items-start gap-2.5">
+                        <MessageCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                        <div className="space-y-0.5 flex-1">
+                          <p className="font-extrabold text-amber-900 text-xs">
+                            Layanan Online Toko Sedang Offline
+                          </p>
+                          <p className="text-[11px] text-amber-800 leading-relaxed">
+                            Sistem online toko sedang offline atau di luar jam operasional. Anda tetap bisa berbelanja dan langsung mengirimkan pesanan belanja online via WhatsApp ke kasir toko!
+                          </p>
+                        </div>
+                      </div>
+                      <a
+                        href={whatsappOrderGeneralUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-[11px] rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1.5 shadow-xs"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        <span>Kirim Pesanan via WhatsApp Kasir ({displayWhatsAppNumber})</span>
+                      </a>
+                    </div>
+                  )}
                 </div>
 
                 {/* CAMERA SCANNER */}
@@ -1825,6 +2405,52 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
             ) : (
               /* TAB 2: REGISTER NEW MEMBER */
               <form onSubmit={handleRegisterMemberSubmit} className="space-y-3">
+                {/* JAM BUKA OPERASIONAL TOKO & STATUS ONLINE DI TAB DAFTAR */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-[11px] shadow-3xs">
+                    <span className="text-slate-700 font-bold flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-red-600 shrink-0" />
+                      <span>Jam Buka Toko: {storeOperatingHours}</span>
+                    </span>
+                    {isOnlineStatus ? (
+                      <span className="flex items-center gap-1.5 font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-2.5 py-0.5 rounded-full text-[10px]">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Online
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 font-black text-rose-700 bg-rose-100 border border-rose-300 px-2.5 py-0.5 rounded-full text-[10px]">
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                        Offline
+                      </span>
+                    )}
+                  </div>
+
+                  {!isOnlineStatus && (
+                    <div className="p-3 bg-amber-50/95 border border-amber-300/80 rounded-2xl text-xs text-amber-950 space-y-2 animate-in fade-in duration-200 shadow-3xs">
+                      <div className="flex items-start gap-2.5">
+                        <MessageCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                        <div className="space-y-0.5 flex-1">
+                          <p className="font-extrabold text-amber-900 text-xs">
+                            Toko Sedang Offline / Tutup
+                          </p>
+                          <p className="text-[11px] text-amber-800 leading-relaxed">
+                            Jangan khawatir, Anda tetap bisa berbelanja dan langsung mengirimkan pesanan belanja online via WhatsApp ke kasir toko!
+                          </p>
+                        </div>
+                      </div>
+                      <a
+                        href={whatsappOrderGeneralUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-[11px] rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1.5 shadow-xs"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        <span>Kirim Pesanan via WhatsApp Kasir ({displayWhatsAppNumber})</span>
+                      </a>
+                    </div>
+                  )}
+                </div>
+
                 <div>
                   <label className="block text-[11px] font-extrabold text-slate-700 mb-1">
                     Nama Lengkap Pembeli <span className="text-red-500">*</span>
@@ -1969,6 +2595,33 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
               <span className="font-mono text-xs font-extrabold text-slate-800 block">
                 {loggedInMember.id}
               </span>
+            </div>
+
+            {/* RIWAYAT PESANAN ONLINE LINK IN MEMBER CARD */}
+            <div className="p-3.5 bg-gradient-to-br from-red-50 to-slate-50 border border-red-200/70 rounded-2xl text-left space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                  <Package className="w-4 h-4 text-red-600" />
+                  <span>Riwayat Pesanan Akun Member</span>
+                </span>
+                <span className="text-[10px] font-black text-red-700 bg-white px-2 py-0.5 rounded-full border border-red-200 shadow-3xs">
+                  {buyerOrders.length} Pesanan
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-600 leading-relaxed">
+                Cek status real-time pesanan toko online, lacak proses kasir, atau pesan ulang belanjaan Anda.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsDigitalCardOpen(false);
+                  setIsOrderHistoryOpen(true);
+                }}
+                className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-2 shadow-xs active:scale-98"
+              >
+                <Clock className="w-3.5 h-3.5 text-amber-300" />
+                <span>Buka Riwayat Pesanan Saya ({buyerOrders.length})</span>
+              </button>
             </div>
 
             <button
@@ -2138,6 +2791,718 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 4. MODAL STATUS PESANAN SAYA & RIWAYAT PESANAN ONLINE (SINKRON KASIR) */}
+      {/* ========================================================================= */}
+      {isOrderHistoryOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[250] flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-50 rounded-3xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+            
+            {/* MODAL HEADER */}
+            <div className="p-4 sm:p-5 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white flex items-center justify-between border-b border-slate-700/80 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-red-600/90 rounded-2xl border border-red-400/40 shadow-inner">
+                  <Package className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-black text-base sm:text-lg tracking-tight">
+                      Status &amp; Riwayat Pesanan
+                    </h3>
+                    <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                      Live Kasir
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300 flex items-center gap-1.5 flex-wrap">
+                    {loggedInMember ? (
+                      <>
+                        <span className="text-amber-300 font-extrabold">{loggedInMember.nama}</span>
+                        <span className="text-slate-400">•</span>
+                        <span className="bg-white/10 px-1.5 py-0.2 rounded font-mono text-[11px] text-amber-200">
+                          {formatDisplayMemberId(loggedInMember)}
+                        </span>
+                      </>
+                    ) : (
+                      <span>Pesanan di Perangkat Ini / Pencarian No. HP</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleRefreshOrders}
+                  disabled={isRefreshingOrders}
+                  className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all cursor-pointer border border-slate-700 disabled:opacity-50 active:scale-95 flex items-center gap-1 text-xs font-bold"
+                  title="Segarkan data pesanan dari kasir cloud"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isRefreshingOrders ? 'animate-spin text-amber-400' : ''}`} />
+                  <span className="hidden sm:inline">Segarkan</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsOrderHistoryOpen(false)}
+                  className="p-2 rounded-xl bg-slate-800/80 hover:bg-rose-900/80 text-slate-300 hover:text-white transition-colors cursor-pointer border border-slate-700/60"
+                  title="Tutup Riwayat Pesanan"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* SEARCH LOOKUP BAR & LIVE STATUS BANNER */}
+            <div className="bg-white px-4 py-3 border-b border-slate-200 space-y-2.5 shrink-0">
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={orderSearchLookup}
+                  onChange={(e) => setOrderSearchLookup(e.target.value)}
+                  placeholder={loggedInMember ? `Cari pesanan milik ${loggedInMember.nama} (No. Pesanan, Nama Barang)...` : "Cari No. Pesanan (Contoh: ORD-...) atau No. HP..."}
+                  className="w-full pl-9 pr-8 py-2 bg-slate-100 hover:bg-slate-100/80 focus:bg-white text-xs rounded-xl border border-slate-200 focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none font-medium transition-all"
+                />
+                {orderSearchLookup && (
+                  <button
+                    type="button"
+                    onClick={() => setOrderSearchLookup('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* ACTIVE MEMBER BADGE */}
+              {loggedInMember && (
+                <div className="flex items-center justify-between text-[11px] bg-amber-50/90 border border-amber-200/90 px-3 py-1.5 rounded-xl text-amber-950">
+                  <span className="flex items-center gap-1.5 font-bold truncate">
+                    <UserCheck className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                    <span className="truncate">Akun: <strong className="text-amber-900">{loggedInMember.nama}</strong> ({formatDisplayMemberId(loggedInMember)})</span>
+                  </span>
+                  <span className="text-[10px] font-black bg-white px-2 py-0.5 rounded-full border border-amber-300 text-amber-800 shrink-0 shadow-3xs">
+                    🔒 Khusus Pesanan Anda
+                  </span>
+                </div>
+              )}
+
+              {/* FILTER TABS */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => setOrderFilterTab('semua')}
+                  className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                    orderFilterTab === 'semua'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <span>Semua</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+                    orderFilterTab === 'semua' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
+                  }`}>
+                    {buyerOrders.length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setOrderFilterTab('aktif')}
+                  className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                    orderFilterTab === 'aktif'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200/60'
+                  }`}
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>Sedang Diproses</span>
+                  {activeOrdersCount > 0 && (
+                    <span className="bg-red-600 text-white text-[10px] font-black px-1.5 py-0.2 rounded-full animate-pulse">
+                      {activeOrdersCount}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setOrderFilterTab('selesai')}
+                  className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                    orderFilterTab === 'selesai'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200/60'
+                  }`}
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Selesai</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full font-black bg-emerald-200 text-emerald-900">
+                    {buyerOrders.filter(o => o.status === 'Selesai').length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setOrderFilterTab('dibatalkan')}
+                  className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                    orderFilterTab === 'dibatalkan'
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'bg-rose-50 text-rose-800 hover:bg-rose-100 border border-rose-200/60'
+                  }`}
+                >
+                  <span>Dibatalkan</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full font-black bg-rose-200 text-rose-900">
+                    {buyerOrders.filter(o => o.status === 'Dibatalkan').length}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {/* ORDERS LIST CONTAINER */}
+            <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3.5 bg-slate-100/60">
+              {filteredOrders.length === 0 ? (
+                <div className="bg-white rounded-2xl p-8 text-center space-y-3 border border-slate-200 shadow-xs my-4">
+                  <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center mx-auto text-slate-400">
+                    <Package className="w-7 h-7" />
+                  </div>
+                  <div>
+                    <h4 className="font-black text-sm text-slate-800">
+                      {orderSearchLookup ? 'Pesanan Tidak Ditemukan' : 'Belum Ada Riwayat Pesanan'}
+                    </h4>
+                    <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 leading-relaxed">
+                      {orderSearchLookup 
+                        ? `Tidak ada pesanan yang cocok dengan kata kunci "${orderSearchLookup}". Coba periksa kembali No. Pesanan atau No. HP Anda.`
+                        : loggedInMember 
+                          ? 'Pesanan online yang Anda pesan menggunakan akun member ini akan otomatis muncul di sini dan statusnya tersinkron secara langsung dengan kasir toko.'
+                          : 'Masuk dengan ID Member atau No. HP untuk otomatis memuat seluruh riwayat pesanan Anda.'}
+                    </p>
+                  </div>
+                  {!loggedInMember && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsOrderHistoryOpen(false);
+                        setIsMemberModalOpen(true);
+                      }}
+                      className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer inline-flex items-center gap-1.5"
+                    >
+                      <UserCheck className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Login Member SRC</span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                filteredOrders.map((order) => {
+                  const isExpanded = !!expandedOrderIds[order.id];
+                  
+                  // Calculate workflow step number based on status
+                  let stepNumber = 1;
+                  let statusColor = 'bg-amber-100 text-amber-900 border-amber-300';
+                  let statusTitle = 'Menunggu Konfirmasi Toko';
+                  let statusDesc = 'Kasir sedang memeriksa ketersediaan barang';
+                  let statusIcon = <Clock className="w-4 h-4 text-amber-600" />;
+
+                  if (order.status === 'Diproses') {
+                    stepNumber = 2;
+                    statusColor = 'bg-sky-100 text-sky-900 border-sky-300';
+                    statusTitle = 'Sedang Diproses & Dipacking';
+                    statusDesc = 'Barang belanjaan sedang disiapkan oleh staf toko';
+                    statusIcon = <Package className="w-4 h-4 text-sky-600" />;
+                  } else if (order.status === 'Siap Diambil/Dikirim') {
+                    stepNumber = 3;
+                    statusColor = 'bg-purple-100 text-purple-900 border-purple-300';
+                    statusTitle = order.tipePengiriman === 'Ambil di Toko' ? 'Siap Diambil di Toko' : 'Siap Diantar Kurir';
+                    statusDesc = order.tipePengiriman === 'Ambil di Toko' ? 'Pesanan sudah siap di kasir toko' : 'Kurir sedang bersiap / menuju alamat Anda';
+                    statusIcon = <Truck className="w-4 h-4 text-purple-600" />;
+                  } else if (order.status === 'Selesai') {
+                    stepNumber = 4;
+                    statusColor = 'bg-emerald-100 text-emerald-900 border-emerald-300';
+                    statusTitle = 'Pesanan Selesai';
+                    statusDesc = 'Transaksi selesai dan barang telah diterima';
+                    statusIcon = <CheckCircle2 className="w-4 h-4 text-emerald-600" />;
+                  } else if (order.status === 'Dibatalkan') {
+                    stepNumber = 0;
+                    statusColor = 'bg-rose-100 text-rose-900 border-rose-300';
+                    statusTitle = 'Pesanan Dibatalkan';
+                    statusDesc = order.catatan || 'Pesanan dibatalkan oleh kasir atau pembeli';
+                    statusIcon = <AlertCircle className="w-4 h-4 text-rose-600" />;
+                  }
+
+                  const totalItemsInOrder = order.items.length;
+                  const checkedCountInOrder = order.items.filter((_, idx) => !!crosscheckedItems[`${order.id}_${idx}`]).length;
+                  const isAllOrderChecked = totalItemsInOrder > 0 && checkedCountInOrder === totalItemsInOrder;
+
+                  return (
+                    <div
+                      key={order.id}
+                      className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden transition-all hover:border-slate-300"
+                    >
+                      {/* CARD HEADER */}
+                      <div className="p-3.5 sm:p-4 bg-slate-50/70 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono font-black text-xs sm:text-sm text-slate-900">
+                              #{order.id}
+                            </span>
+                            <span className="text-[10px] text-slate-400">•</span>
+                            <span className="text-[11px] text-slate-500 font-medium">
+                              {order.waktu || order.waktuPesan || '-'}
+                            </span>
+                            {order.idMember && (
+                              <span className="bg-red-50 text-red-700 border border-red-200 text-[10px] font-black px-1.5 py-0.2 rounded">
+                                🆔 {order.idMember}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-slate-600 flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-slate-800">{order.namaPembeli}</span>
+                            {order.teleponPembeli && (
+                              <span className="text-slate-500 font-mono text-[10.5px]">({order.teleponPembeli})</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* STATUS BADGE */}
+                        <div className={`px-2.5 py-1 rounded-xl border text-xs font-black flex items-center gap-1.5 shadow-3xs ${statusColor}`}>
+                          {statusIcon}
+                          <span>{order.status}</span>
+                        </div>
+                      </div>
+
+                      {/* LIVE REAL-TIME PROGRESS BAR TIMELINE */}
+                      {order.status !== 'Dibatalkan' ? (
+                        <div className="px-4 py-3 bg-gradient-to-r from-slate-50 via-white to-slate-50 border-b border-slate-100">
+                          <div className="flex items-center justify-between text-[10px] font-extrabold text-slate-500 mb-1.5">
+                            <span className={stepNumber >= 1 ? 'text-amber-600' : ''}>1. Masuk</span>
+                            <span className={stepNumber >= 2 ? 'text-sky-600' : ''}>2. Diproses</span>
+                            <span className={stepNumber >= 3 ? 'text-purple-600' : ''}>3. Siap Diantar/Ambil</span>
+                            <span className={stepNumber >= 4 ? 'text-emerald-600' : ''}>4. Selesai</span>
+                          </div>
+                          <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden flex">
+                            <div
+                              className={`h-full transition-all duration-500 rounded-full ${
+                                stepNumber === 1 ? 'bg-amber-500 w-1/4 animate-pulse' :
+                                stepNumber === 2 ? 'bg-sky-500 w-2/4 animate-pulse' :
+                                stepNumber === 3 ? 'bg-purple-600 w-3/4 animate-pulse' :
+                                'bg-emerald-600 w-full'
+                              }`}
+                            />
+                          </div>
+                          <div className="mt-2 flex items-center gap-1.5 text-[11px]">
+                            <span className="font-bold text-slate-800">{statusTitle}:</span>
+                            <span className="text-slate-500">{statusDesc}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="px-4 py-2.5 bg-rose-50/60 border-b border-rose-100 text-rose-800 text-[11px] font-medium flex items-center gap-2">
+                          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                          <span>Pesanan telah dibatalkan di kasir toko. Silakan hubungi toko jika ada kendala.</span>
+                        </div>
+                      )}
+
+                      {/* DETAILS & ITEMS LIST */}
+                      <div className="p-3.5 sm:p-4 space-y-3">
+                        {/* DELIVERY & PAYMENT META */}
+                        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                          <span className={`px-2 py-0.5 rounded-md font-bold flex items-center gap-1 ${
+                            order.tipePengiriman === 'Pesan Antar'
+                              ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                              : 'bg-amber-50 text-amber-800 border border-amber-200'
+                          }`}>
+                            {order.tipePengiriman === 'Pesan Antar' ? <Truck className="w-3 h-3" /> : <Store className="w-3 h-3" />}
+                            {order.tipePengiriman}
+                          </span>
+
+                          <span className="px-2 py-0.5 rounded-md font-bold bg-slate-100 text-slate-700 border border-slate-200 flex items-center gap-1">
+                            <DollarSign className="w-3 h-3 text-slate-500" />
+                            {order.metodePembayaran}
+                          </span>
+
+                          {order.alamatPembeli && (
+                            <span className="text-slate-500 truncate max-w-xs text-[10.5px]">
+                              📍 {order.alamatPembeli}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* ITEMS BREAKDOWN & CROSSCHECK SECTION */}
+                        <div className="bg-slate-50/90 rounded-2xl p-3 border border-slate-200/80 space-y-2.5">
+                          <div className="flex items-center justify-between text-xs font-black text-slate-800 border-b border-slate-200/80 pb-2 flex-wrap gap-2">
+                            <div className="flex items-center gap-1.5">
+                              <ClipboardCheck className="w-4 h-4 text-emerald-600" />
+                              <span>Daftar Barang &amp; Crosscheck ({order.items.reduce((acc, it) => acc + (it.qty || 1), 0)} pcs)</span>
+                            </div>
+                            
+                            <div className="flex items-center gap-2">
+                              {/* Progress Badge */}
+                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border transition-all ${
+                                isAllOrderChecked 
+                                  ? 'bg-emerald-100 text-emerald-800 border-emerald-300' 
+                                  : checkedCountInOrder > 0 
+                                    ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                    : 'bg-slate-200 text-slate-700 border-slate-300'
+                              }`}>
+                                {checkedCountInOrder}/{order.items.length} Sesuai
+                              </span>
+
+                              {/* Toggle All Button */}
+                              <button
+                                type="button"
+                                onClick={() => markAllOrderCrosschecked(order.id, order.items.length, !isAllOrderChecked)}
+                                className="text-[10.5px] font-extrabold text-slate-700 hover:text-emerald-700 bg-white px-2 py-0.5 rounded-lg border border-slate-200 hover:border-emerald-300 shadow-3xs cursor-pointer transition-all active:scale-95"
+                                title="Klik untuk menandai semua barang sesuai atau mereset"
+                              >
+                                {isAllOrderChecked ? 'Reset Cek' : 'Ceklis Semua ✓'}
+                              </button>
+
+                              {order.items.length > 3 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedOrderIds(prev => ({ ...prev, [order.id]: !isExpanded }))}
+                                  className="text-red-600 hover:text-red-700 font-extrabold text-[10.5px] cursor-pointer ml-1"
+                                >
+                                  {isExpanded ? 'Ringkas' : `Semua (${order.items.length})`}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Items Checklist List */}
+                          <div className="space-y-1.5 pt-0.5">
+                            {(isExpanded ? order.items : order.items.slice(0, 3)).map((item, idx) => {
+                              const isChecked = !!crosscheckedItems[`${order.id}_${idx}`];
+                              return (
+                                <div
+                                  key={idx}
+                                  onClick={() => toggleCrosscheckItem(order.id, idx)}
+                                  className={`flex items-center justify-between gap-2.5 p-2 rounded-xl border text-xs cursor-pointer transition-all select-none ${
+                                    isChecked
+                                      ? 'bg-emerald-50/90 border-emerald-300 text-emerald-950 shadow-3xs'
+                                      : 'bg-white border-slate-200/90 hover:border-slate-300 text-slate-800'
+                                  }`}
+                                  title="Klik untuk menandai barang sudah dicek dan sesuai"
+                                >
+                                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                    <div className="shrink-0 flex items-center justify-center">
+                                      {isChecked ? (
+                                        <CheckSquare className="w-4 h-4 text-emerald-600" />
+                                      ) : (
+                                        <Square className="w-4 h-4 text-slate-400" />
+                                      )}
+                                    </div>
+                                    <div className="truncate pr-1">
+                                      <span className={`font-bold block truncate ${isChecked ? 'line-through text-emerald-800' : 'text-slate-900'}`}>
+                                        {item.nama}
+                                      </span>
+                                      <span className="text-[10.5px] text-slate-500">
+                                        {item.qty} {item.satuanNama || 'pcs'} x {formatRp(item.jual)}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div className="text-right shrink-0">
+                                    <span className="font-mono font-bold text-slate-900 text-xs block">
+                                      {formatRp(item.subtotal || item.jual * item.qty)}
+                                    </span>
+                                    {isChecked ? (
+                                      <span className="text-[9.5px] font-black text-emerald-700 bg-white px-1.5 py-0.2 rounded border border-emerald-300 inline-block">
+                                        ✓ Sesuai
+                                      </span>
+                                    ) : (
+                                      <span className="text-[9.5px] text-slate-400 block">
+                                        Ketuk ceklis
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+
+                            {!isExpanded && order.items.length > 3 && (
+                              <button
+                                type="button"
+                                onClick={() => setExpandedOrderIds(prev => ({ ...prev, [order.id]: true }))}
+                                className="w-full text-center py-1 text-[11px] font-bold text-red-600 hover:text-red-700 bg-white rounded-lg border border-dashed border-slate-300 cursor-pointer"
+                              >
+                                + Buka {order.items.length - 3} barang lainnya untuk dicroscek
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Crosscheck Notice for Pickup or Delivery */}
+                          <div className={`p-2.5 rounded-xl border text-[11px] leading-relaxed flex items-start gap-2 ${
+                            isAllOrderChecked 
+                              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                              : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                          }`}>
+                            {isAllOrderChecked ? (
+                              <>
+                                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                                <div>
+                                  <span className="font-black">Pemeriksaan Barang Selesai!</span>
+                                  <p className="text-[10.5px] text-emerald-800">
+                                    Semua ({order.items.length}) barang belanjaan telah Anda verifikasi sesuai dan lengkap.
+                                  </p>
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                                <div>
+                                  <span className="font-black">
+                                    {order.tipePengiriman === 'Ambil di Toko' ? 'Crosscheck Pengambilan di Toko:' : 'Crosscheck Penerimaan Pesan Antar:'}
+                                  </span>
+                                  <p className="text-[10.5px] text-amber-800">
+                                    {order.tipePengiriman === 'Ambil di Toko'
+                                      ? `Tunjukkan No. Pesanan #${order.id} ke kasir toko. Ceklis setiap barang di atas untuk memastikan belanjaan Anda lengkap sebelum pulang.`
+                                      : `Ceklis setiap barang di atas saat kurir mengantar paket ke ${order.alamatPembeli || 'alamat Anda'} untuk memastikan tidak ada barang yang kurang.`}
+                                  </p>
+                                </div>
+                              </>
+                            )}
+                          </div>
+
+                          {order.catatan && (
+                            <div className="pt-1.5 border-t border-slate-200/60 text-[10.5px] text-amber-900 bg-amber-50/50 p-1.5 rounded-lg">
+                              <span className="font-bold">Catatan:</span> {order.catatan}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* TOTAL & ACTION BUTTONS */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 border-t border-slate-100">
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                              <span>Total Bayar:</span>
+                              {order.ongkir ? (
+                                <span className="text-[10px] text-slate-400">(Termasuk Ongkir {formatRp(order.ongkir)})</span>
+                              ) : null}
+                            </div>
+                            <span className="font-black text-base text-red-600">
+                              {formatRp(order.totalBayar)}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {/* TOMBOL TANYA KASIR WHATSAPP */}
+                            <a
+                              href={getOrderInquiryWhatsAppUrl(order)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-xs rounded-xl shadow-3xs transition-all flex items-center gap-1.5 cursor-pointer"
+                              title="Tanya perkembangan pesanan ke WhatsApp kasir toko"
+                            >
+                              <MessageCircle className="w-3.5 h-3.5" />
+                              <span>Tanya Kasir</span>
+                            </a>
+
+                            {/* TOMBOL NOTA STRUK */}
+                            <button
+                              type="button"
+                              onClick={() => setSelectedOrderForReceipt(order)}
+                              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 font-extrabold text-xs rounded-xl border border-slate-300 transition-all flex items-center gap-1.5 cursor-pointer"
+                              title="Buka struk / nota digital pesanan"
+                            >
+                              <Receipt className="w-3.5 h-3.5 text-slate-600" />
+                              <span>Struk</span>
+                            </button>
+
+                            {/* TOMBOL BELI ULANG */}
+                            <button
+                              type="button"
+                              onClick={() => handleReorderItems(order)}
+                              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 active:scale-95 text-white font-extrabold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                              title="Masukkan barang dari pesanan ini ke keranjang belanja"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+                              <span>Pesan Lagi</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* MODAL FOOTER */}
+            <div className="p-3 bg-white border-t border-slate-200 flex items-center justify-between text-xs text-slate-500 shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                <span className="text-[11px] font-medium">
+                  Status otomatis tersinkron dengan kasir toko (Firestore Cloud)
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsOrderHistoryOpen(false)}
+                className="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 font-bold text-slate-700 rounded-xl transition-colors cursor-pointer"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 5. MODAL NOTA STRUK DIGITAL PESANAN ONLINE */}
+      {/* ========================================================================= */}
+      {selectedOrderForReceipt && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[260] flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl w-full max-w-md max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+            
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Receipt className="w-4 h-4 text-amber-400" />
+                <h4 className="font-black text-sm">Nota Struk Belanja Online</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedOrderForReceipt(null)}
+                className="p-1 rounded-lg bg-slate-800 text-slate-300 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-4 font-mono text-xs text-slate-800 bg-white">
+              {/* STORE HEADER */}
+              <div className="text-center space-y-1 pb-3 border-b-2 border-dashed border-slate-300">
+                <h3 className="font-black text-base tracking-wider uppercase font-sans text-slate-950">
+                  {config.namaToko || 'TOKO SRC MASNGUD'}
+                </h3>
+                <p className="text-[11px] text-slate-600 font-sans">
+                  {config.alamatToko || 'Belanja Praktis & Hemat Dekat Rumah'}
+                </p>
+                {config.noHp && (
+                  <p className="text-[10px] text-slate-500 font-sans">
+                    Telp / WA: {config.noHp}
+                  </p>
+                )}
+              </div>
+
+              {/* ORDER META */}
+              <div className="space-y-1 text-[11px] border-b border-dashed border-slate-300 pb-2">
+                <div className="flex justify-between">
+                  <span>No. Pesanan:</span>
+                  <span className="font-bold">{selectedOrderForReceipt.id}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Waktu:</span>
+                  <span>{selectedOrderForReceipt.waktu || selectedOrderForReceipt.waktuPesan || '-'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Pembeli:</span>
+                  <span className="font-bold">{selectedOrderForReceipt.namaPembeli}</span>
+                </div>
+                {selectedOrderForReceipt.teleponPembeli && (
+                  <div className="flex justify-between">
+                    <span>No. HP:</span>
+                    <span>{selectedOrderForReceipt.teleponPembeli}</span>
+                  </div>
+                )}
+                {selectedOrderForReceipt.idMember && (
+                  <div className="flex justify-between text-red-600 font-bold">
+                    <span>ID Member:</span>
+                    <span>{selectedOrderForReceipt.idMember}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span>Status:</span>
+                  <span className="font-bold uppercase text-amber-700">{selectedOrderForReceipt.status}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Pengiriman:</span>
+                  <span>{selectedOrderForReceipt.tipePengiriman}</span>
+                </div>
+                {selectedOrderForReceipt.alamatPembeli && (
+                  <div className="text-[10px] text-slate-500 pt-0.5">
+                    Alamat: {selectedOrderForReceipt.alamatPembeli}
+                  </div>
+                )}
+              </div>
+
+              {/* ITEMS TABLE */}
+              <div className="space-y-1.5 border-b-2 border-dashed border-slate-300 pb-3">
+                <div className="flex justify-between text-[11px] font-bold text-slate-900 border-b border-slate-200 pb-1">
+                  <span>Barang</span>
+                  <span>Total</span>
+                </div>
+                {selectedOrderForReceipt.items.map((item, idx) => (
+                  <div key={idx} className="space-y-0.5 text-[11px]">
+                    <div className="font-medium text-slate-900">{item.nama}</div>
+                    <div className="flex justify-between text-slate-600 text-[10px]">
+                      <span>{item.qty} {item.satuanNama || 'pcs'} x {formatRp(item.jual)}</span>
+                      <span className="font-bold text-slate-900">{formatRp(item.subtotal || item.jual * item.qty)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* TOTALS */}
+              <div className="space-y-1 text-[11px] border-b border-dashed border-slate-300 pb-2">
+                <div className="flex justify-between">
+                  <span>Subtotal Barang:</span>
+                  <span>{formatRp(selectedOrderForReceipt.totalHarga || (selectedOrderForReceipt.totalBayar - (selectedOrderForReceipt.ongkir || 0)))}</span>
+                </div>
+                {selectedOrderForReceipt.ongkir ? (
+                  <div className="flex justify-between">
+                    <span>Ongkos Kirim:</span>
+                    <span>{formatRp(selectedOrderForReceipt.ongkir)}</span>
+                  </div>
+                ) : null}
+                <div className="flex justify-between text-sm font-black text-slate-950 pt-1 border-t border-slate-200">
+                  <span>TOTAL BAYAR:</span>
+                  <span className="text-red-600">{formatRp(selectedOrderForReceipt.totalBayar)}</span>
+                </div>
+                <div className="flex justify-between text-[10.5px] text-slate-600 pt-0.5">
+                  <span>Metode Pembayaran:</span>
+                  <span className="font-bold">{selectedOrderForReceipt.metodePembayaran}</span>
+                </div>
+              </div>
+
+              {/* STORE FOOTER MESSAGE */}
+              <div className="text-center text-[10.5px] text-slate-500 font-sans pt-1 space-y-0.5">
+                <p className="font-bold text-slate-700">Terima Kasih Telah Berbelanja di {config.namaToko || 'Toko SRC'}</p>
+                <p>Simpan nota ini sebagai bukti transaksi pesanan online yang sah.</p>
+              </div>
+            </div>
+
+            {/* NOTA ACTIONS */}
+            <div className="p-3 bg-slate-50 border-t border-slate-200 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Printer className="w-3.5 h-3.5 text-amber-400" />
+                <span>Cetak / PDF</span>
+              </button>
+              <a
+                href={getOrderInquiryWhatsAppUrl(selectedOrderForReceipt)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs text-center"
+              >
+                <MessageCircle className="w-3.5 h-3.5" />
+                <span>Kirim WA</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 6. TOAST NOTIFICATION BANNER */}
+      {/* ========================================================================= */}
+      {orderToastMessage && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[300] bg-slate-900 text-white px-4 py-2.5 rounded-2xl shadow-2xl border border-slate-700 text-xs font-bold flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+          <span>{orderToastMessage}</span>
         </div>
       )}
     </div>

@@ -115,30 +115,39 @@ export interface ConfigStruk {
 export interface DetailItemPesananOnline {
   itemId: string;
   nama: string;
-  kode: string;
+  kode?: string;
+  barcode?: string;
   qty: number;
-  jual: number;
+  jual?: number;
+  harga?: number; // alias for jual
   subtotal: number;
   satuanNama?: string;
+  satuan?: string; // alias for satuanNama
   unitId?: string;
 }
 
 export interface PesananOnline {
   id: string; // e.g. ORD-20260722-1234
-  waktu: string; // Formatted date string
-  timestamp: number; // epoch ms
+  waktu?: string; // Formatted date string
+  waktuPesan?: string; // alias for waktu
+  timestamp?: number; // epoch ms
   namaPembeli: string;
   teleponPembeli: string;
   alamatPembeli?: string;
+  alamatPengiriman?: string; // alias for alamatPembeli
   tipePengiriman: 'Ambil di Toko' | 'Pesan Antar';
+  opsiPengambilan?: string; // alias for tipePengiriman
   catatan?: string;
+  catatanPembeli?: string; // alias for catatan
   items: DetailItemPesananOnline[];
-  totalHarga: number;
-  ongkir: number;
+  totalHarga?: number;
+  ongkir?: number;
   totalBayar: number;
   metodePembayaran: 'COD (Bayar di Tempat)' | 'QRIS' | 'Transfer Bank';
   status: 'Menunggu Konfirmasi' | 'Diproses' | 'Siap Diambil/Dikirim' | 'Selesai' | 'Dibatalkan';
   alasanBatal?: string;
+  memberId?: string; // ID Member pembeli jika bertransaksi via akun member
+  idMember?: string; // Display ID member (e.g. SRC-MEM-...)
 }
 
 export interface ShiftLog {

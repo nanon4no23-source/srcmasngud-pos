@@ -1,0 +1,44 @@
+{
+  "entities": {
+    "ItemBarang": {
+      "title": "ItemBarang",
+      "description": "Master data barang toko SRC MASNGUD",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nama": { "type": "string" },
+        "hargaJual": { "type": "number" },
+        "hargaBeli": { "type": "number" },
+        "stok": { "type": "number" }
+      },
+      "required": ["id", "nama", "hargaJual"]
+    },
+    "PesananOnline": {
+      "title": "PesananOnline",
+      "description": "Data pesanan online dari pelanggan toko SRC MASNGUD",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "namaPembeli": { "type": "string" },
+        "teleponPembeli": { "type": "string" },
+        "totalBayar": { "type": "number" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "namaPembeli", "totalBayar", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/barang/{itemId}": {
+      "schema": { "$ref": "#/entities/ItemBarang" },
+      "description": "Koleksi barang per toko"
+    },
+    "/users/{userId}/pesanan_online/{orderId}": {
+      "schema": { "$ref": "#/entities/PesananOnline" },
+      "description": "Koleksi pesanan online masuk per toko"
+    },
+    "/stores/{storeId}": {
+      "schema": { "$ref": "#/entities/PesananOnline" },
+      "description": "Metadata & mapping toko publik"
+    }
+  }
+}

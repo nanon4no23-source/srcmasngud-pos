@@ -218,6 +218,37 @@ public class AndroidBluetoothPrinter {
         return result.toString();
     }
 
+    private BluetoothSocket tryConnectSocket(BluetoothSocket socket, String description, int timeoutMs) {
+        if (socket == null) return null;
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Log.d(TAG, "Mencoba koneksi printer via " + description + " (timeout " + timeoutMs + "ms)...");
+            Future<Boolean> future = executor.submit(new Callable<Boolean>() {
+                @Override
+                public Boolean call() throws Exception {
+                    socket.connect();
+                    return true;
+                }
+            });
+            future.get(timeoutMs, TimeUnit.MILLISECONDS);
+            Log.d(TAG, "Berhasil terhubung ke printer via " + description + "!");
+            return socket;
+        } catch (Exception e) {
+            Log.w(TAG, description + " gagal (" + e.getClass().getSimpleName() + "): " + e.getMessage());
+            try {
+                socket.close();
+            } catch (Exception ignored) {}
+            try {
+                Thread.sleep(200);
+            } catch (Exception ignored) {}
+            return null;
+        } finally {
+            try {
+                executor.shutdownNow();
+            } catch (Exception ignored) {}
+        }
+    }
+
     @JavascriptInterface
     public synchronized String connect(String macAddress) {
         JSONObject res = new JSONObject();
@@ -237,70 +268,94 @@ public class AndroidBluetoothPrinter {
             return res.toString();
         }
 
+        // Jika sudah terhubung ke perangkat ini dan socket aktif, langsung kembalikan sukses
+        if (isConnected() && macAddress != null && macAddress.equalsIgnoreCase(connectedDeviceAddress)) {
+            try {
+                res.put("success", true);
+                res.put("name", connectedDeviceName);
+                res.put("address", connectedDeviceAddress);
+                return res.toString();
+            } catch (Exception ignored) {}
+        }
+
         cleanup();
+        try {
+            Thread.sleep(200);
+        } catch (Exception ignored) {}
 
         try {
             bluetoothAdapter.cancelDiscovery();
+            try {
+                Thread.sleep(200);
+            } catch (Exception ignored) {}
+
             BluetoothDevice device = bluetoothAdapter.getRemoteDevice(macAddress);
             if (device == null) {
                 res.put("success", false);
-                res.put("error", "Perangkat dengan MAC " + macAddress + " tidak ditemukan.");
+                res.put("error", "Perangkat Bluetooth dengan MAC " + macAddress + " tidak ditemukan.");
                 return res.toString();
             }
 
             BluetoothSocket socket = null;
-            Exception lastError = null;
-            final BluetoothDevice finalDevice = device;
 
-            ExecutorService executor = Executors.newSingleThreadExecutor();
-
-            // Percobaan 1: Insecure RFCOMM Socket dengan SPP UUID (standar printer thermal)
-            try {
-                Log.d(TAG, "Attempting Insecure SPP UUID with 2500ms timeout...");
-                final BluetoothSocket s1 = finalDevice.createInsecureRfcommSocketToServiceRecord(SPP_UUID);
-                Future<Boolean> f1 = executor.submit(new Callable<Boolean>() {
-                    @Override
-                    public Boolean call() throws Exception {
-                        s1.connect();
-                        return true;
-                    }
-                });
-                f1.get(2500, TimeUnit.MILLISECONDS);
-                socket = s1;
-                Log.d(TAG, "Successfully connected via Insecure SPP UUID!");
-            } catch (Exception e1) {
-                lastError = e1;
-                Log.w(TAG, "Insecure SPP UUID failed or timed out: " + e1.getMessage());
-            }
-
-            // Percobaan 2 (jika percobaan 1 gagal): Reflection Insecure Channel 1
+            // METODE 1: Standar Android Secure SPP UUID (Wajib untuk perangkat yang sudah disandingkan dengan PIN 0000/1234)
             if (socket == null) {
                 try {
-                    Log.d(TAG, "Attempting reflection channel 1 with 2000ms timeout...");
-                    Method m = finalDevice.getClass().getMethod("createInsecureRfcommSocket", new Class[]{int.class});
-                    final BluetoothSocket s2 = (BluetoothSocket) m.invoke(finalDevice, 1);
-                    Future<Boolean> f2 = executor.submit(new Callable<Boolean>() {
-                        @Override
-                        public Boolean call() throws Exception {
-                            s2.connect();
-                            return true;
-                        }
-                    });
-                    f2.get(2000, TimeUnit.MILLISECONDS);
-                    socket = s2;
-                    Log.d(TAG, "Successfully connected via reflection channel 1!");
-                } catch (Exception e2) {
-                    lastError = e2;
-                    Log.w(TAG, "Reflection channel 1 failed or timed out: " + e2.getMessage());
+                    BluetoothSocket s = device.createRfcommSocketToServiceRecord(SPP_UUID);
+                    socket = tryConnectSocket(s, "Secure SPP UUID (Standar Resmi)", 6000);
+                } catch (Exception e) {
+                    Log.w(TAG, "Gagal membuat Secure SPP socket: " + e.getMessage());
                 }
             }
 
-            executor.shutdownNow();
+            // METODE 2: Direct Channel 1 Secure (Melewati pencarian SDP yang sering gagal/timeout pada printer thermal)
+            if (socket == null) {
+                try {
+                    Method m = device.getClass().getMethod("createRfcommSocket", new Class[]{int.class});
+                    BluetoothSocket s = (BluetoothSocket) m.invoke(device, 1);
+                    socket = tryConnectSocket(s, "Direct Secure Channel 1 (Bypass SDP)", 5000);
+                } catch (Exception e) {
+                    Log.w(TAG, "Gagal membuat Direct Channel 1 socket: " + e.getMessage());
+                }
+            }
+
+            // METODE 3: Standar Insecure SPP UUID (Untuk printer / ROM yang tidak mendukung enkripsi link)
+            if (socket == null) {
+                try {
+                    BluetoothSocket s = device.createInsecureRfcommSocketToServiceRecord(SPP_UUID);
+                    socket = tryConnectSocket(s, "Insecure SPP UUID", 5000);
+                } catch (Exception e) {
+                    Log.w(TAG, "Gagal membuat Insecure SPP socket: " + e.getMessage());
+                }
+            }
+
+            // METODE 4: Direct Channel 1 Insecure
+            if (socket == null) {
+                try {
+                    Method m = device.getClass().getMethod("createInsecureRfcommSocket", new Class[]{int.class});
+                    BluetoothSocket s = (BluetoothSocket) m.invoke(device, 1);
+                    socket = tryConnectSocket(s, "Direct Insecure Channel 1", 5000);
+                } catch (Exception e) {
+                    Log.w(TAG, "Gagal membuat Direct Insecure Channel 1 socket: " + e.getMessage());
+                }
+            }
+
+            // METODE 5: Fallback Channel 2 dan 3 (untuk printer dual-mode BLE / Classic terbaru)
+            if (socket == null) {
+                for (int ch = 2; ch <= 3; ch++) {
+                    try {
+                        Method m = device.getClass().getMethod("createRfcommSocket", new Class[]{int.class});
+                        BluetoothSocket s = (BluetoothSocket) m.invoke(device, ch);
+                        socket = tryConnectSocket(s, "Fallback Channel " + ch, 4000);
+                        if (socket != null) break;
+                    } catch (Exception ignored) {}
+                }
+            }
 
             if (socket == null) {
                 cleanup();
                 res.put("success", false);
-                res.put("error", "Printer tidak merespons atau sedang offline: " + (lastError != null ? lastError.getMessage() : "Timeout"));
+                res.put("error", "Printer tidak merespons setelah 5 metode koneksi. Pastikan printer menyala, dekat dengan HP, dan tidak sedang tersambung ke HP atau aplikasi lain.");
                 return res.toString();
             }
 
@@ -311,6 +366,18 @@ public class AndroidBluetoothPrinter {
                 connectedDeviceName = "Printer Thermal (" + macAddress + ")";
             }
             connectedDeviceAddress = macAddress;
+
+            // Kirim perintah inisialisasi ESC @ (0x1B, 0x40) agar printer aktif dan tidak idle sleep
+            try {
+                currentOutputStream.write(new byte[]{0x1B, 0x40});
+                currentOutputStream.flush();
+                Log.d(TAG, "Printer berhasil diinisialisasi dengan ESC @");
+            } catch (Exception ex) {
+                Log.w(TAG, "Inisialisasi ESC @ gagal: " + ex.getMessage());
+            }
+
+            // Mulai background thread untuk memantau status pemutusan printer secara real-time
+            startConnectionWatcher();
 
             res.put("success", true);
             res.put("name", connectedDeviceName);
@@ -329,6 +396,38 @@ public class AndroidBluetoothPrinter {
         }
 
         return res.toString();
+    }
+
+    private synchronized void startConnectionWatcher() {
+        if (currentSocket == null) return;
+        final BluetoothSocket socketToWatch = currentSocket;
+        Thread watcher = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    java.io.InputStream in = socketToWatch.getInputStream();
+                    byte[] buffer = new byte[64];
+                    while (socketToWatch.isConnected() && currentSocket == socketToWatch) {
+                        int read = in.read(buffer);
+                        if (read == -1) {
+                            Log.d(TAG, "Socket input stream closed by remote device (-1)");
+                            break;
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.d(TAG, "Connection watcher disconnected: " + e.getMessage());
+                } finally {
+                    synchronized (AndroidBluetoothPrinter.this) {
+                        if (currentSocket == socketToWatch) {
+                            Log.d(TAG, "Printer fisik terputus, membersihkan status socket...");
+                            cleanup();
+                        }
+                    }
+                }
+            }
+        }, "BtPrinterWatcher");
+        watcher.setDaemon(true);
+        watcher.start();
     }
 
     @JavascriptInterface
@@ -364,11 +463,19 @@ public class AndroidBluetoothPrinter {
 
         try {
             byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);
-            currentOutputStream.write(bytes);
-            currentOutputStream.flush();
+            int chunkSize = 256;
+            for (int i = 0; i < bytes.length; i += chunkSize) {
+                int len = Math.min(chunkSize, bytes.length - i);
+                currentOutputStream.write(bytes, i, len);
+                currentOutputStream.flush();
+                if (bytes.length > chunkSize) {
+                    try { Thread.sleep(15); } catch (Exception ignored) {}
+                }
+            }
             res.put("success", true);
         } catch (Exception e) {
             Log.e(TAG, "Error writing raw bytes to printer", e);
+            cleanup();
             try {
                 res.put("success", false);
                 res.put("error", "Terputus saat mencetak: " + e.getMessage());
@@ -391,10 +498,19 @@ public class AndroidBluetoothPrinter {
 
         try {
             byte[] bytes = text.getBytes("GBK"); // GBK/CP437 umum digunakan printer POS
-            currentOutputStream.write(bytes);
-            currentOutputStream.flush();
+            int chunkSize = 256;
+            for (int i = 0; i < bytes.length; i += chunkSize) {
+                int len = Math.min(chunkSize, bytes.length - i);
+                currentOutputStream.write(bytes, i, len);
+                currentOutputStream.flush();
+                if (bytes.length > chunkSize) {
+                    try { Thread.sleep(15); } catch (Exception ignored) {}
+                }
+            }
             res.put("success", true);
         } catch (Exception e) {
+            Log.e(TAG, "Error writing text bytes to printer", e);
+            cleanup();
             try {
                 res.put("success", false);
                 res.put("error", "Gagal mencetak teks: " + e.getMessage());

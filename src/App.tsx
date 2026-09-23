@@ -6852,36 +6852,48 @@ export default function App() {
     showToast("Transaksi berhasil dicatat dan diproses!");
   };
 
-  // Mock-buzz the thermal print head for a beautiful virtual preview
+  // Mock-buzz the thermal print head for a beautiful virtual preview without leaking AudioContext
   const triggerReceiptPrintingSound = () => {
     setIsSimulatingPrint(true);
-    let chunks = 12;
+    let chunks = 8;
     let index = 0;
+    let sharedCtx: any = null;
+    try {
+      sharedCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    } catch (e) {
+      sharedCtx = null;
+    }
 
     const playPulse = () => {
       if (index >= chunks) {
         setIsSimulatingPrint(false);
+        if (sharedCtx && typeof sharedCtx.close === 'function') {
+          sharedCtx.close().catch(() => {});
+        }
         return;
       }
       
-      try {
-        // High frequency micro friction pulses mimicking POS pin heat transfers
-        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(240, audioCtx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(70, audioCtx.currentTime + 0.12);
-        gain.gain.setValueAtTime(0.04, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.15);
-      } catch (e) {}
+      if (sharedCtx && sharedCtx.state !== 'closed') {
+        try {
+          if (sharedCtx.state === 'suspended') {
+            sharedCtx.resume().catch(() => {});
+          }
+          const osc = sharedCtx.createOscillator();
+          const gain = sharedCtx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(240, sharedCtx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(70, sharedCtx.currentTime + 0.08);
+          gain.gain.setValueAtTime(0.03, sharedCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, sharedCtx.currentTime + 0.08);
+          osc.connect(gain);
+          gain.connect(sharedCtx.destination);
+          osc.start();
+          osc.stop(sharedCtx.currentTime + 0.09);
+        } catch (e) {}
+      }
       
       index++;
-      setTimeout(playPulse, 180);
+      setTimeout(playPulse, 120);
     };
 
     playPulse();
@@ -7247,11 +7259,16 @@ export default function App() {
   const handleConnectBluetoothThermal = async () => {
     // If already connected, toggle to disconnect
     if (btStatus === 'connected') {
+      localStorage.setItem('cfg_auto_reconnect_bt', 'false');
       if (typeof (window as any).AndroidPrinter !== 'undefined') {
-        (window as any).AndroidPrinter.disconnect();
+        try {
+          (window as any).AndroidPrinter.disconnect();
+        } catch (e) {}
       }
       if (bluetoothDevice?.gatt?.connected) {
-        bluetoothDevice.gatt.disconnect();
+        try {
+          bluetoothDevice.gatt.disconnect();
+        } catch (e) {}
       }
       setBluetoothDevice(null);
       setPrintCharacteristic(null);

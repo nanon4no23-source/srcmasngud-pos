@@ -37,6 +37,7 @@ public class AndroidBluetoothPrinter {
     private BluetoothAdapter bluetoothAdapter;
     private BluetoothSocket currentSocket;
     private OutputStream currentOutputStream;
+    private Thread currentWatcherThread;
     private String connectedDeviceName = "";
     private String connectedDeviceAddress = "";
 
@@ -401,13 +402,21 @@ public class AndroidBluetoothPrinter {
     private synchronized void startConnectionWatcher() {
         if (currentSocket == null) return;
         final BluetoothSocket socketToWatch = currentSocket;
-        Thread watcher = new Thread(new Runnable() {
+        
+        // Stop any old thread if still alive
+        if (currentWatcherThread != null && currentWatcherThread.isAlive()) {
+            try {
+                currentWatcherThread.interrupt();
+            } catch (Exception ignored) {}
+        }
+
+        currentWatcherThread = new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
                     java.io.InputStream in = socketToWatch.getInputStream();
                     byte[] buffer = new byte[64];
-                    while (socketToWatch.isConnected() && currentSocket == socketToWatch) {
+                    while (!Thread.currentThread().isInterrupted() && socketToWatch.isConnected() && currentSocket == socketToWatch) {
                         int read = in.read(buffer);
                         if (read == -1) {
                             Log.d(TAG, "Socket input stream closed by remote device (-1)");
@@ -426,8 +435,8 @@ public class AndroidBluetoothPrinter {
                 }
             }
         }, "BtPrinterWatcher");
-        watcher.setDaemon(true);
-        watcher.start();
+        currentWatcherThread.setDaemon(true);
+        currentWatcherThread.start();
     }
 
     @JavascriptInterface
@@ -521,6 +530,13 @@ public class AndroidBluetoothPrinter {
     }
 
     public synchronized void cleanup() {
+        if (currentWatcherThread != null && currentWatcherThread.isAlive()) {
+            try {
+                currentWatcherThread.interrupt();
+            } catch (Exception ignored) {}
+        }
+        currentWatcherThread = null;
+
         try {
             if (currentOutputStream != null) {
                 currentOutputStream.close();

@@ -4167,7 +4167,14 @@ export default function App() {
       }
       // 10. Customer Store Portal
       if (isCustomerPortalOpen) {
-        setIsCustomerPortalOpen(false);
+        const isCustomerOnly = typeof window !== 'undefined' && (
+          new URLSearchParams(window.location.search).get('mode') === 'pembeli' ||
+          new URLSearchParams(window.location.search).get('mode') === 'toko' ||
+          window.location.hash === '#pembeli'
+        );
+        if (!isCustomerOnly) {
+          setIsCustomerPortalOpen(false);
+        }
         return true;
       }
       // 11. Recovery Modal
@@ -23050,6 +23057,7 @@ export default function App() {
             isOwnerView={true}
             existingOrders={pesananOnline}
             storeId={activeOnlineStoreIds[0] || 'store_nanon4no23_gmail_com'}
+            onUpdateConfig={handleConfigUpdate}
           />
         </div>
       )}

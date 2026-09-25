@@ -1,14 +1,17 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { ItemBarang, ConfigStruk, PesananOnline, DetailItemPesananOnline, Pelanggan } from '../types';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { ItemBarang, ConfigStruk, PesananOnline, DetailItemPesananOnline, Pelanggan, PromoBanner } from '../types';
 import { 
   ShoppingBag, Search, X, Plus, Minus, Truck, Store, 
   CheckCircle2, AlertCircle, MessageCircle, Trash2,
   ChevronRight, ChevronLeft, QrCode, CreditCard, DollarSign, Send, Info,
-  User, UserCheck, Key, LogOut, ShieldCheck, Award,
+  User, UserCheck, Key, LogOut, ShieldCheck, Award, Shield,
   Camera, Copy, Check, Sparkles, Tag, ArrowRight, ArrowUp, Loader2, Cloud,
   Clock, Package, RefreshCw, Receipt, RotateCcw, ExternalLink, Printer,
-  CheckSquare, Square, ClipboardCheck
+  CheckSquare, Square, ClipboardCheck, CloudOff, AlertTriangle, Megaphone, Eye
 } from 'lucide-react';
+import webOrderBannerImg from '../assets/web_order_banner.jpg';
+import srcMasngudBannerImg from '../assets/src_masngud_banner.jpg';
+import { SrcLogo } from './SrcLogo';
 import CameraScanner from './CameraScanner';
 import { prepareSearchIndex, searchProductsByPrefix } from '../utils/searchHelper';
 import { 
@@ -16,7 +19,7 @@ import {
   listenToStoreForBuyer, 
   submitBuyerOrder, 
   registerBuyerMember, 
-  searchMemberInCloud,
+  searchMemberInCloud, 
   normalizePhone,
   listenToIncomingOnlineOrders,
   fetchPesananOnlineFromCloud
@@ -45,6 +48,7 @@ interface CustomerOnlineStoreProps {
   isOwnerView?: boolean;
   existingOrders?: PesananOnline[];
   storeId?: string;
+  onUpdateConfig?: (key: keyof ConfigStruk, value: any) => void;
 }
 
 export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
@@ -57,6 +61,7 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
   isOwnerView = false,
   existingOrders = [],
   storeId,
+  onUpdateConfig,
 }) => {
   const activeStoreId = useMemo(() => storeId || resolveStoreId(), [storeId]);
   const [cloudBarang, setCloudBarang] = useState<ItemBarang[]>(initialBarang);
@@ -151,24 +156,94 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
   const [regNama, setRegNama] = useState('');
   const [regPhone, setRegPhone] = useState('');
   const [memberLoginError, setMemberLoginError] = useState<string | null>(null);
+  const [showManualLoginInput, setShowManualLoginInput] = useState<boolean>(false);
 
   // New states for Member ID features
   const [isDigitalCardOpen, setIsDigitalCardOpen] = useState(false);
   const [isMemberCardScannerOpen, setIsMemberCardScannerOpen] = useState(false);
   const [copiedMemberId, setCopiedMemberId] = useState(false);
 
-  // States for Online Store Promo Banner Carousel
-  const activePromoBanners = useMemo(() => {
-    return Array.isArray(config?.promoBanners) ? config.promoBanners.filter(b => b.aktif && b.imageUrl) : [];
+  // =========================================================================
+  // MULTIPLE ADVERTISING BANNERS SYSTEM (IKLAN & PROMOSI TOKO DI PEMBELI)
+  // =========================================================================
+  // Multiple active advertisement banners for the carousel
+  const activePromoBanners: PromoBanner[] = useMemo(() => {
+    const fromConfig = Array.isArray(config?.promoBanners) ? config.promoBanners.filter(b => b.aktif && b.imageUrl) : [];
+    if (fromConfig.length > 0) return fromConfig;
+
+    // Default starter advertisement banners so multiple banners rotate right away!
+    return [
+      {
+        id: 'starter-ad-1',
+        judul: 'Belanja Mandiri Lebih Murah & Bebas Antre',
+        deskripsi: 'Pesan kebutuhan harian langsung dari HP dengan harga hemat dan diskon toko.',
+        imageUrl: webOrderBannerImg,
+        aktif: true,
+        kategoriBanner: 'Promo',
+        linkKategori: 'Semua'
+      },
+      {
+        id: 'starter-ad-2',
+        judul: 'Promo Spesial & Poin Belanja Member Setia',
+        deskripsi: 'Kumpulkan poin di setiap transaksi dan dapatkan potongan harga eksklusif khusus member.',
+        imageUrl: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=1200&auto=format&fit=crop&q=80',
+        aktif: true,
+        kategoriBanner: 'Promo',
+        linkKategori: 'Semua'
+      },
+      {
+        id: 'starter-ad-3',
+        judul: 'Pesan Antar Cepat Langsung ke Rumah Anda',
+        deskripsi: 'Belanja praktis tanpa repot keluar rumah, konfirmasi pesanan via WhatsApp kasir.',
+        imageUrl: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?w=1200&auto=format&fit=crop&q=80',
+        aktif: true,
+        kategoriBanner: 'Iklan',
+        linkKategori: 'Semua'
+      }
+    ];
   }, [config?.promoBanners]);
+
+  // Daftar banner untuk header utama portal pembeli: banner resmi SRC MASNGUD + banner promo & iklan toko
+  const portalHeaderBanners = useMemo(() => {
+    const list: { id: string; judul: string; imageUrl: string; deskripsi?: string; kategoriBanner?: 'Promo' | 'Iklan' }[] = [
+      {
+        id: 'official-masngud-banner',
+        judul: config.namaToko || 'SRC MASNGUD',
+        imageUrl: srcMasngudBannerImg,
+      },
+      ...activePromoBanners
+    ];
+    return list;
+  }, [activePromoBanners, config.namaToko]);
+
+  const [portalBannerIndex, setPortalBannerIndex] = useState(0);
+
+  // Auto rotate portal header banners every 4.5 seconds
+  useEffect(() => {
+    if (portalHeaderBanners.length <= 1) return;
+    const timer = setInterval(() => {
+      setPortalBannerIndex((prev) => (prev + 1) % portalHeaderBanners.length);
+    }, 4500);
+    return () => clearInterval(timer);
+  }, [portalHeaderBanners.length]);
 
   const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
   const [selectedPromoModal, setSelectedPromoModal] = useState<any>(null);
   const [highlightedProductId, setHighlightedProductId] = useState<string | null>(null);
 
+  // Auto rotate banners every 4.5 seconds
+  useEffect(() => {
+    if (activePromoBanners.length <= 1) return;
+    const timer = setInterval(() => {
+      setCurrentBannerIndex((prev) => (prev + 1) % activePromoBanners.length);
+    }, 4500);
+    return () => clearInterval(timer);
+  }, [activePromoBanners.length]);
+
   // Helper to handle banner navigation & direct checkout
   const handleNavigateToPromoProduct = (banner: any, autoCheckout = false) => {
     if (!banner) return;
+    setIsMemberModalOpen(false);
 
     // Target specific product if specified
     if (banner.linkProductId) {
@@ -384,8 +459,10 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
       setIsMemberModalOpen(false);
       setMemberLoginError(null);
       setMemberInput('');
+      setOrderToastMessage(`🎉 Selamat datang, ${target.nama}!`);
+      setTimeout(() => setOrderToastMessage(null), 3000);
     } else {
-      setMemberLoginError(`Nomor HP / ID / Barcode / Nama "${memberInput}" tidak ditemukan di data toko. Silakan gunakan tab "Daftar Member Baru" untuk membuat akun.`);
+      setMemberLoginError(`Nomor HP / ID Member / Nama "${memberInput}" belum ditemukan. Silakan periksa kembali atau gunakan tab "Daftar Member Baru".`);
     }
   };
 
@@ -503,12 +580,136 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
     return list;
   });
   const [isOrderHistoryOpen, setIsOrderHistoryOpen] = useState<boolean>(false);
-  const [orderFilterTab, setOrderFilterTab] = useState<'semua' | 'aktif' | 'selesai' | 'dibatalkan'>('semua');
+  const [orderFilterTab, setOrderFilterTab] = useState<'semua' | 'aktif' | 'selesai' | 'dibatalkan' | 'offline'>('semua');
   const [selectedOrderForReceipt, setSelectedOrderForReceipt] = useState<PesananOnline | null>(null);
   const [isRefreshingOrders, setIsRefreshingOrders] = useState<boolean>(false);
   const [orderSearchLookup, setOrderSearchLookup] = useState<string>('');
   const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
   const [orderToastMessage, setOrderToastMessage] = useState<string | null>(null);
+
+  // Set of order IDs verified directly from Cloud Firestore
+  const [confirmedCloudOrderIds, setConfirmedCloudOrderIds] = useState<Set<string>>(() => new Set());
+  const confirmedCloudOrderIdsRef = useRef<Set<string>>(new Set());
+  // Tracking per-order retry sync progress
+  const [syncingOrderIds, setSyncingOrderIds] = useState<Record<string, boolean>>({});
+  const [isSyncingAllPending, setIsSyncingAllPending] = useState<boolean>(false);
+
+  // Background Sync Engine: Scans localStorage and pushes any unsynced offline orders to Firestore Cloud
+  const syncAllPendingOrders = useCallback(async (forced = false) => {
+    if (typeof window === 'undefined' || !activeStoreId) return;
+
+    let savedOrders: PesananOnline[] = [];
+    try {
+      const raw = localStorage.getItem('src_online_placed_orders_full');
+      if (raw) savedOrders = JSON.parse(raw);
+    } catch (e) {}
+
+    if (!savedOrders || savedOrders.length === 0) return;
+
+    // Filter orders that have not been confirmed in cloud
+    const pendingOrders = savedOrders.filter(o => {
+      if (!o || !o.id) return false;
+      // If already verified in cloud, no need to push
+      if (confirmedCloudOrderIdsRef.current.has(o.id)) return false;
+      // If marked as synced and not forced, skip
+      if (o.syncStatus === 'synced' && !forced) return false;
+      return true;
+    });
+
+    if (pendingOrders.length === 0) return;
+
+    setIsSyncingAllPending(true);
+    let newlySyncedCount = 0;
+
+    for (const order of pendingOrders) {
+      try {
+        const ok = await submitBuyerOrder(activeStoreId, order);
+        if (ok) {
+          newlySyncedCount++;
+          confirmedCloudOrderIdsRef.current.add(order.id);
+          setConfirmedCloudOrderIds(new Set(confirmedCloudOrderIdsRef.current));
+          order.syncStatus = 'synced';
+          order.syncedAt = new Date().toISOString();
+          order.lastSyncError = undefined;
+        } else {
+          order.syncStatus = 'failed';
+          order.lastSyncError = 'Jaringan belum terhubung ke cloud kasir';
+        }
+      } catch (err) {
+        order.syncStatus = 'failed';
+      }
+    }
+
+    // Save updated syncStatus back to localStorage
+    try {
+      localStorage.setItem('src_online_placed_orders_full', JSON.stringify(savedOrders));
+    } catch (e) {}
+
+    // Update cloudOrders state so UI reflects synced status immediately
+    setCloudOrders(prev => {
+      const map = new Map<string, PesananOnline>();
+      prev.forEach(o => map.set(o.id, o));
+      savedOrders.forEach(o => {
+        const existing = map.get(o.id);
+        if (existing) {
+          map.set(o.id, { ...existing, syncStatus: o.syncStatus, syncedAt: o.syncedAt });
+        } else {
+          map.set(o.id, o);
+        }
+      });
+      return Array.from(map.values()).sort((a, b) => {
+        const timeA = a.timestamp || new Date(a.waktuPesan || a.waktu || 0).getTime() || 0;
+        const timeB = b.timestamp || new Date(b.waktuPesan || b.waktu || 0).getTime() || 0;
+        return timeB - timeA;
+      });
+    });
+
+    setIsSyncingAllPending(false);
+
+    if (newlySyncedCount > 0) {
+      setOrderToastMessage(`✅ ${newlySyncedCount} pesanan offline berhasil terkirim ke kasir toko!`);
+      setTimeout(() => setOrderToastMessage(null), 4000);
+    }
+  }, [activeStoreId]);
+
+  // Single order retry push to cloud
+  const handleRetrySyncOrder = async (order: PesananOnline) => {
+    if (!order || !order.id || syncingOrderIds[order.id]) return;
+    setSyncingOrderIds(prev => ({ ...prev, [order.id]: true }));
+    try {
+      const ok = await submitBuyerOrder(activeStoreId, order);
+      if (ok) {
+        confirmedCloudOrderIdsRef.current.add(order.id);
+        setConfirmedCloudOrderIds(new Set(confirmedCloudOrderIdsRef.current));
+
+        // Update in localStorage
+        try {
+          const raw = localStorage.getItem('src_online_placed_orders_full');
+          if (raw) {
+            const list: PesananOnline[] = JSON.parse(raw);
+            const idx = list.findIndex(o => o.id === order.id);
+            if (idx !== -1) {
+              list[idx].syncStatus = 'synced';
+              list[idx].syncedAt = new Date().toISOString();
+              list[idx].lastSyncError = undefined;
+              localStorage.setItem('src_online_placed_orders_full', JSON.stringify(list));
+            }
+          }
+        } catch (e) {}
+
+        // Update state
+        setCloudOrders(prev => prev.map(o => o.id === order.id ? { ...o, syncStatus: 'synced', syncedAt: new Date().toISOString() } : o));
+        setOrderToastMessage(`✅ Pesanan #${order.id} berhasil terkirim ke kasir toko!`);
+      } else {
+        setOrderToastMessage(`⚠️ Gagal mengirim ke kasir. Periksa koneksi internet Anda lalu coba lagi.`);
+      }
+    } catch (e) {
+      setOrderToastMessage(`⚠️ Error koneksi: Gagal mengirim pesanan ke cloud kasir.`);
+    } finally {
+      setSyncingOrderIds(prev => ({ ...prev, [order.id]: false }));
+      setTimeout(() => setOrderToastMessage(null), 3500);
+    }
+  };
 
   // Crosscheck verification state for checking off items upon pickup or delivery
   const [crosscheckedItems, setCrosscheckedItems] = useState<Record<string, boolean>>(() => {
@@ -554,6 +755,11 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
     // 1. Snapshot Listener
     const unsub = listenToIncomingOnlineOrders([activeStoreId], (incomingList) => {
       if (incomingList && incomingList.length > 0) {
+        incomingList.forEach(o => {
+          if (o?.id) confirmedCloudOrderIdsRef.current.add(o.id);
+        });
+        setConfirmedCloudOrderIds(new Set(confirmedCloudOrderIdsRef.current));
+
         setCloudOrders(prev => {
           const map = new Map<string, PesananOnline>();
           prev.forEach(o => map.set(o.id, o));
@@ -564,12 +770,20 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
             return timeB - timeA;
           });
         });
+
+        // Trigger sweeper for any remaining offline orders
+        syncAllPendingOrders();
       }
     });
 
     // 2. Immediate on-demand fetch
     fetchPesananOnlineFromCloud([activeStoreId]).then((fetched) => {
       if (fetched && fetched.length > 0) {
+        fetched.forEach(o => {
+          if (o?.id) confirmedCloudOrderIdsRef.current.add(o.id);
+        });
+        setConfirmedCloudOrderIds(new Set(confirmedCloudOrderIdsRef.current));
+
         setCloudOrders(prev => {
           const map = new Map<string, PesananOnline>();
           prev.forEach(o => map.set(o.id, o));
@@ -580,6 +794,9 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
             return timeB - timeA;
           });
         });
+
+        // Automatically push any local orders that cloud doesn't have yet
+        syncAllPendingOrders();
       }
     }).catch(e => console.warn('Fetch online orders initial error:', e));
 
@@ -587,6 +804,11 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
     const interval = setInterval(() => {
       fetchPesananOnlineFromCloud([activeStoreId]).then((fresh) => {
         if (fresh && fresh.length > 0) {
+          fresh.forEach(o => {
+            if (o?.id) confirmedCloudOrderIdsRef.current.add(o.id);
+          });
+          setConfirmedCloudOrderIds(new Set(confirmedCloudOrderIdsRef.current));
+
           setCloudOrders(prev => {
             const map = new Map<string, PesananOnline>();
             prev.forEach(o => map.set(o.id, o));
@@ -597,6 +819,9 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
               return timeB - timeA;
             });
           });
+
+          // Check if any local orders need to be pushed
+          syncAllPendingOrders();
         }
       }).catch(() => {});
     }, 15000);
@@ -605,11 +830,33 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
       unsub();
       clearInterval(interval);
     };
-  }, [activeStoreId]);
+  }, [activeStoreId, syncAllPendingOrders]);
+
+  // Online network event listener: immediately trigger sync when internet reconnects
+  useEffect(() => {
+    const handleOnline = () => {
+      console.log('🌐 Koneksi internet kembali aktif, menyinkronkan pesanan offline...');
+      syncAllPendingOrders(true);
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [syncAllPendingOrders]);
+
+  // Auto sync whenever order history modal is opened
+  useEffect(() => {
+    if (isOrderHistoryOpen) {
+      syncAllPendingOrders();
+    }
+  }, [isOrderHistoryOpen, syncAllPendingOrders]);
 
   // Keep synced with incoming props if changed
   useEffect(() => {
     if (existingOrders && existingOrders.length > 0) {
+      existingOrders.forEach(o => {
+        if (o?.id) confirmedCloudOrderIdsRef.current.add(o.id);
+      });
+      setConfirmedCloudOrderIds(new Set(confirmedCloudOrderIdsRef.current));
+
       setCloudOrders(prev => {
         const map = new Map<string, PesananOnline>();
         prev.forEach(o => map.set(o.id, o));
@@ -629,6 +876,11 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
     try {
       const fresh = await fetchPesananOnlineFromCloud([activeStoreId]);
       if (fresh && fresh.length > 0) {
+        fresh.forEach(o => {
+          if (o?.id) confirmedCloudOrderIdsRef.current.add(o.id);
+        });
+        setConfirmedCloudOrderIds(new Set(confirmedCloudOrderIdsRef.current));
+
         setCloudOrders(prev => {
           const map = new Map<string, PesananOnline>();
           prev.forEach(o => map.set(o.id, o));
@@ -639,10 +891,11 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
             return timeB - timeA;
           });
         });
-        setOrderToastMessage('✅ Status pesanan berhasil diperbarui dari kasir cloud!');
-      } else {
-        setOrderToastMessage('ℹ️ Belum ada update status baru dari kasir.');
       }
+
+      // Also force-sync any local offline orders to cloud
+      await syncAllPendingOrders(true);
+      setOrderToastMessage('✅ Data pesanan berhasil diperbarui & disinkronkan ke kasir!');
     } catch (e) {
       console.warn('Refresh orders error:', e);
       setOrderToastMessage('⚠️ Gagal menyegarkan status pesanan. Periksa koneksi internet.');
@@ -692,17 +945,25 @@ export const CustomerOnlineStore: React.FC<CustomerOnlineStoreProps> = ({
       formattedPhone = '62' + formattedPhone.slice(1);
     }
 
+    const isOfflinePending = !confirmedCloudOrderIds.has(order.id) && order.syncStatus !== 'synced';
+    const itemsSummary = (order.items || []).map((it, idx) => 
+      `${idx + 1}. ${it.nama} (${it.qty} ${it.satuanNama || 'pcs'}) = ${formatRp(it.subtotal || (it.jual || 0) * it.qty)}`
+    ).join('\n');
+
     const message = `Halo ${config.namaToko || 'Toko SRC'} 🙏
 Saya *${order.namaPembeli}* (${loggedInMember ? `Member: ${formatDisplayMemberId(loggedInMember)}` : `No. HP: ${order.teleponPembeli}`}).
 
-Ingin menanyakan status pesanan online saya:
-🧾 *No. Pesanan:* ${order.id}
+${isOfflinePending ? '⚠️ *Konfirmasi Pesanan Baru (Tersimpan di HP / Offline):*' : 'Ingin menanyakan status pesanan online saya:'}
+🧾 *No. Pesanan:* #${order.id}
 ⏰ *Waktu Pesan:* ${order.waktu || order.waktuPesan || '-'}
 📦 *Status di Sistem:* ${order.status}
 💰 *Total Bayar:* ${formatRp(order.totalBayar)}
 🚚 *Pengiriman:* ${order.tipePengiriman}${order.alamatPembeli ? ` (${order.alamatPembeli})` : ''}
+${order.catatan ? `📝 *Catatan:* ${order.catatan}\n` : ''}
+🛒 *Daftar Barang Belanja:*
+${itemsSummary || '-'}
 
-Apakah pesanan saya sudah selesai diproses dan siap dikirim / diambil? Terima kasih! 🙏`;
+${isOfflinePending ? 'Pesanan ini saya buat saat jaringan offline, mohon bantu cek dan proses ya kak. Terima kasih! 🙏' : 'Apakah pesanan saya sudah selesai diproses dan siap dikirim / diambil? Terima kasih! 🙏'}`;
 
     return `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
   };
@@ -839,6 +1100,16 @@ Apakah pesanan saya sudah selesai diproses dan siap dikirim / diambil? Terima ka
     return buyerOrders.filter(o => o.status !== 'Selesai' && o.status !== 'Dibatalkan').length;
   }, [buyerOrders]);
 
+  const unsyncedBuyerOrders = useMemo(() => {
+    return buyerOrders.filter(o => {
+      if (!o || !o.id) return false;
+      if (o.status === 'Selesai' || o.status === 'Dibatalkan') return false;
+      return !confirmedCloudOrderIds.has(o.id) && o.syncStatus !== 'synced';
+    });
+  }, [buyerOrders, confirmedCloudOrderIds]);
+
+  const unsyncedOrdersCount = unsyncedBuyerOrders.length;
+
   const filteredOrders = useMemo(() => {
     if (orderFilterTab === 'aktif') {
       return buyerOrders.filter(o => o.status !== 'Selesai' && o.status !== 'Dibatalkan');
@@ -849,8 +1120,11 @@ Apakah pesanan saya sudah selesai diproses dan siap dikirim / diambil? Terima ka
     if (orderFilterTab === 'dibatalkan') {
       return buyerOrders.filter(o => o.status === 'Dibatalkan');
     }
+    if (orderFilterTab === 'offline') {
+      return buyerOrders.filter(o => !confirmedCloudOrderIds.has(o.id) && o.syncStatus !== 'synced');
+    }
     return buyerOrders;
-  }, [buyerOrders, orderFilterTab]);
+  }, [buyerOrders, orderFilterTab, confirmedCloudOrderIds]);
 
   const isStoreOpen = config.tokoOnlineAktif !== false; // Default true unless explicitly closed
   // Disguised store online/offline status (replaces technical database cloud status)
@@ -894,7 +1168,37 @@ Apakah pesanan saya sudah selesai diproses dan siap dikirim / diambil? Terima ka
 
   // Handle Mobile / Browser Back Button (popstate) safely
   useEffect(() => {
-    const isAnyModalOpen = isCartOpen || !!selectedPromoModal || isDigitalCardOpen || isMemberCardScannerOpen || isMemberModalOpen || isOrderHistoryOpen || !!selectedOrderForReceipt;
+    // 1. Jika pembeli belum login (berada di halaman utama portal pembeli):
+    if (!loggedInMember) {
+      if (isMemberCardScannerOpen || memberModalTab === 'register') {
+        try {
+          window.history.pushState({ modalOpen: true }, '');
+        } catch (e) {}
+      }
+
+      const handlePopStateAuth = () => {
+        // Jika scanner kamera terbuka -> tutup scanner dan kembali ke portal login
+        if (isMemberCardScannerOpen) {
+          setIsMemberCardScannerOpen(false);
+          return;
+        }
+        // Jika sedang di tab pendaftaran -> kembali ke tab login
+        if (memberModalTab === 'register') {
+          setMemberModalTab('login');
+          return;
+        }
+        // Di tab login utama: pertahankan halaman portal pembeli (cegah pembeli masuk ke katalog toko)
+        try {
+          window.history.pushState({ modalOpen: true }, '');
+        } catch (e) {}
+      };
+
+      window.addEventListener('popstate', handlePopStateAuth);
+      return () => window.removeEventListener('popstate', handlePopStateAuth);
+    }
+
+    // 2. Jika sudah login member:
+    const isAnyModalOpen = isCartOpen || !!selectedPromoModal || isDigitalCardOpen || isOrderHistoryOpen || !!selectedOrderForReceipt || !!zoomedImage;
 
     if (isAnyModalOpen) {
       try {
@@ -903,16 +1207,14 @@ Apakah pesanan saya sudah selesai diproses dan siap dikirim / diambil? Terima ka
     }
 
     const handlePopState = () => {
-      // 1. Close open modal first if active
+      if (zoomedImage) { setZoomedImage(null); return; }
       if (selectedOrderForReceipt) { setSelectedOrderForReceipt(null); return; }
       if (isOrderHistoryOpen) { setIsOrderHistoryOpen(false); return; }
       if (isCartOpen) { setIsCartOpen(false); return; }
       if (selectedPromoModal) { setSelectedPromoModal(null); return; }
       if (isDigitalCardOpen) { setIsDigitalCardOpen(false); return; }
-      if (isMemberCardScannerOpen) { setIsMemberCardScannerOpen(false); return; }
-      if (isMemberModalOpen) { setIsMemberModalOpen(false); return; }
 
-      // 2. If scrolled down deep in products list -> scroll back up to top header
+      // If scrolled down deep in products list -> scroll back up to top header
       if (window.scrollY > 120) {
         scrollToTopHeader();
       }
@@ -921,13 +1223,15 @@ Apakah pesanan saya sudah selesai diproses dan siap dikirim / diambil? Terima ka
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, [
+    loggedInMember,
     isCartOpen,
     selectedPromoModal,
     isDigitalCardOpen,
     isMemberCardScannerOpen,
-    isMemberModalOpen,
+    memberModalTab,
     isOrderHistoryOpen,
-    selectedOrderForReceipt
+    selectedOrderForReceipt,
+    zoomedImage
   ]);
 
   // Pre-indexed search cache for online catalog
@@ -1120,24 +1424,15 @@ Apakah pesanan saya sudah selesai diproses dan siap dikirim / diambil? Terima ka
       metodePembayaran: paymentMethod,
       status: 'Menunggu Konfirmasi',
       memberId: loggedInMember?.id,
-      idMember: loggedInMember ? formatDisplayMemberId(loggedInMember) : undefined
+      idMember: loggedInMember ? formatDisplayMemberId(loggedInMember) : undefined,
+      syncStatus: 'pending'
     };
 
     onPlaceOrder(newOrder);
     setPlacedOrder(newOrder);
     setCloudOrders(prev => [newOrder, ...prev.filter(o => o.id !== newOrder.id)]);
 
-    // Directly push order to Firestore Cloud database so Cashier APK receives it instantly
-    submitBuyerOrder(activeStoreId, newOrder).then((success) => {
-      if (success) {
-        console.log('✅ Pesanan online berhasil terkirim ke Cloud Firestore:', newOrder.id);
-      } else {
-        console.warn('⚠️ Peringatan: Pesanan tersimpan lokal, cadangan cloud sedang diproses.');
-      }
-    }).catch(err => {
-      console.warn('⚠️ Peringatan pengiriman pesanan cloud:', err);
-    });
-
+    // Save to local storage first so the order is never lost even if network fails
     if (typeof window !== 'undefined') {
       try {
         const savedIdsStr = localStorage.getItem('src_online_placed_order_ids');
@@ -1155,6 +1450,38 @@ Apakah pesanan saya sudah selesai diproses dan siap dikirim / diambil? Terima ka
         }
       } catch (e) {}
     }
+
+    // Push order to Firestore Cloud database so Cashier APK receives it immediately
+    submitBuyerOrder(activeStoreId, newOrder).then((success) => {
+      if (success) {
+        console.log('✅ Pesanan online berhasil terkirim ke Cloud Firestore:', newOrder.id);
+        confirmedCloudOrderIdsRef.current.add(newOrder.id);
+        setConfirmedCloudOrderIds(new Set(confirmedCloudOrderIdsRef.current));
+        newOrder.syncStatus = 'synced';
+        newOrder.syncedAt = new Date().toISOString();
+
+        // Update in localStorage
+        try {
+          const savedFullStr = localStorage.getItem('src_online_placed_orders_full');
+          const savedFull: PesananOnline[] = savedFullStr ? JSON.parse(savedFullStr) : [];
+          const idx = savedFull.findIndex(o => o.id === newOrder.id);
+          if (idx !== -1) {
+            savedFull[idx] = { ...savedFull[idx], syncStatus: 'synced', syncedAt: newOrder.syncedAt };
+            localStorage.setItem('src_online_placed_orders_full', JSON.stringify(savedFull));
+          }
+        } catch (e) {}
+
+        // Update state
+        setCloudOrders(prev => prev.map(o => o.id === newOrder.id ? { ...o, syncStatus: 'synced', syncedAt: newOrder.syncedAt } : o));
+      } else {
+        console.warn('⚠️ Peringatan: Pesanan tersimpan lokal di HP, akan otomatis dikirim saat jaringan online.');
+      }
+      // Trigger sync sweeper to also push any previously pending offline orders!
+      syncAllPendingOrders();
+    }).catch(err => {
+      console.warn('⚠️ Peringatan pengiriman pesanan cloud:', err);
+      syncAllPendingOrders();
+    });
 
     setIsCartOpen(false);
     setCartItems({});
@@ -1194,55 +1521,463 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
     return `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
   };
 
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 pb-28 font-sans antialiased">
-      {/* HEADER STORE BRANDING & PROMO BANNERS - SCROLLABLE UPWARDS */}
-      <header id="store-header-top" className="bg-gradient-to-r from-red-600 via-red-700 to-red-800 text-white shadow-md">
-        <div className="max-w-4xl mx-auto px-4 py-3.5 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="bg-white text-red-700 font-black text-[10px] px-2 py-0.5 rounded tracking-wider uppercase shadow-3xs">
-                  Yuk Belanja Online
-                </span>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${
-                  isOnlineStatus ? 'bg-emerald-500/20 text-emerald-100 border border-emerald-400/30' : 'bg-rose-950 text-rose-200 border border-rose-500/30'
-                }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${isOnlineStatus ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
-                  {isOnlineStatus ? 'Online (Buka)' : 'Offline (Tutup)'}
-                </span>
-                <span className="hidden sm:inline-flex items-center gap-1 text-[10px] text-red-100 font-bold bg-black/25 px-2 py-0.5 rounded-full border border-white/10">
-                  <Clock className="w-3 h-3 text-amber-300" />
-                  <span>{storeOperatingHours}</span>
-                </span>
-              </div>
-              <h1 className="text-lg font-black tracking-tight mt-0.5 leading-tight">
-                {config.namaToko || 'Toko Kelontong SRC'}
-              </h1>
-              <p className="text-xs text-red-100 opacity-90 truncate max-w-xs">
-                {config.alamatToko || 'Belanja Praktis & Hemat Dekat Rumah'}
-              </p>
+  // =========================================================================
+  // JIKA PEMBELI BELUM LOGIN MEMBER:
+  // Tampilkan HANYA Halaman Utama Portal Pembeli (Login & Pendaftaran Member)
+  // Menjaga privasi data dan 100% mencegah pembeli masuk ke tampilan katalog toko tanpa autentikasi!
+  // =========================================================================
+  if (!loggedInMember) {
+    return (
+      <div className="min-h-screen bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto font-sans antialiased">
+        <div className="bg-white w-full max-w-md rounded-3xl p-5 sm:p-6 shadow-2xl space-y-4 text-center relative overflow-hidden border border-slate-100 my-auto">
+          {/* FOTO BANNER UTAMA PORTAL PEMBELI: BANNER RESMI SRC MASNGUD & BANNER PROMO / IKLAN (SAMA POSISI) */}
+          <div className="w-full overflow-hidden rounded-2xl border border-red-100 shadow-md bg-white relative group">
+            <div className="relative w-full h-36 sm:h-44 overflow-hidden">
+              {portalHeaderBanners.map((banner, idx) => {
+                if (idx !== portalBannerIndex) return null;
+                return (
+                  <div key={banner.id} className="w-full h-full relative">
+                    <img
+                      src={banner.imageUrl}
+                      alt={banner.judul || 'Banner Toko'}
+                      className="w-full h-full object-cover object-center"
+                      referrerPolicy="no-referrer"
+                    />
+
+                    {/* Lencana kategori jika banner promo / iklan (tanpa tombol langsung checkout, lihat produk, perbesar) */}
+                    {banner.kategoriBanner && (
+                      <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
+                        <span className={`text-[9.5px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider shadow-sm text-white flex items-center gap-1 ${
+                          banner.kategoriBanner === 'Iklan' ? 'bg-blue-600' : 'bg-rose-600'
+                        }`}>
+                          {banner.kategoriBanner === 'Iklan' ? (
+                            <>
+                              <Megaphone className="w-2.5 h-2.5" />
+                              <span>IKLAN</span>
+                            </>
+                          ) : (
+                            <>
+                              <Tag className="w-2.5 h-2.5" />
+                              <span>PROMO</span>
+                            </>
+                          )}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* NAVIGASI PANAH JIKA LEBIH DARI 1 BANNER */}
+              {portalHeaderBanners.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setPortalBannerIndex((prev) => (prev - 1 + portalHeaderBanners.length) % portalHeaderBanners.length)}
+                    className="absolute left-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-slate-900/60 hover:bg-slate-900 text-white backdrop-blur-xs transition-all cursor-pointer opacity-80 group-hover:opacity-100"
+                    title="Banner Sebelumnya"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPortalBannerIndex((prev) => (prev + 1) % portalHeaderBanners.length)}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-slate-900/60 hover:bg-slate-900 text-white backdrop-blur-xs transition-all cursor-pointer opacity-80 group-hover:opacity-100"
+                    title="Banner Berikutnya"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+
+                  {/* INDIKATOR TITIK (DOTS) */}
+                  <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-black/40 px-2 py-1 rounded-full backdrop-blur-xs">
+                    {portalHeaderBanners.map((b, i) => (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => setPortalBannerIndex(i)}
+                        className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                          i === portalBannerIndex ? 'w-4 bg-white' : 'w-1.5 bg-white/40 hover:bg-white/70'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
-          {isOwnerView && (
-            <div className="bg-white/15 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/20 text-[10px] font-bold text-white text-right hidden sm:block">
-              <span>Preview Pembeli</span>
+          {/* HEADER YUK BELANJA ONLINE SRC MASNGUD DEKAT HEMAT DAN BERSAHABAT SEPERTI HEADER KATALOG */}
+          <div className="bg-gradient-to-r from-red-700 via-rose-600 to-red-700 text-white rounded-2xl py-3 px-3 sm:px-4 shadow-sm text-center">
+            {/* LENCANA YUK BELANJA ONLINE */}
+            <div className="flex items-center justify-center mb-1.5">
+              <span className="bg-white text-red-700 font-black text-[10px] sm:text-[11px] px-3 py-0.5 rounded-md tracking-wider uppercase shadow-3xs flex items-center gap-1.5">
+                <ShoppingBag className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                <span>Yuk Belanja Online</span>
+              </span>
+            </div>
+
+            {/* LOGO TAS BELANJA & PENULISAN SRC MASNGUD SEPERTI HEADER KASIR & KATALOG */}
+            <div className="flex flex-row items-center justify-center gap-2 sm:gap-2.5">
+              <div className="shrink-0 flex items-center h-7 sm:h-8">
+                <SrcLogo className="h-7 sm:h-8 w-auto" whiteVariant={true} />
+              </div>
+              <h2 className="text-lg sm:text-xl md:text-2xl font-black tracking-tight text-white flex items-center h-7 sm:h-8 uppercase">
+                {(() => {
+                  const rawName = (config.namaToko || 'MASNGUD').trim();
+                  if (rawName.toUpperCase().startsWith('SRC ')) {
+                    return rawName.substring(4).trim();
+                  }
+                  return rawName;
+                })()}
+              </h2>
+            </div>
+
+            {/* SLOGAN SEPERTI HEADER KASIR & KATALOG */}
+            <p className="text-[9px] sm:text-xs text-white font-bold uppercase tracking-widest mt-1">
+              Dekat Hemat dan Bersahabat
+            </p>
+
+            {/* ALAMAT & NOMOR TOKO */}
+            <p className="text-[10.5px] sm:text-xs text-red-100 opacity-90 mt-0.5 max-w-xs mx-auto line-clamp-1">
+              {config.alamatToko || 'Jl.Suhada 2/3 Kebakalan 085850051070'}
+            </p>
+          </div>
+
+          {/* STATUS PILL BAR: JAM BUKA 07.00 - 21.00 & ONLINE */}
+          <div className="bg-slate-50 border border-slate-200/90 rounded-2xl px-4 py-2.5 flex items-center justify-between shadow-3xs text-left">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-red-500 shrink-0" />
+              <span className="text-xs font-extrabold text-slate-700">Jam Buka 07.00 - 21.00</span>
+            </div>
+            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black ${
+              isOnlineStatus 
+                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
+                : 'bg-rose-100 text-rose-800 border border-rose-300'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${isOnlineStatus ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+              <span>{isOnlineStatus ? 'Online' : 'Offline'}</span>
+            </div>
+          </div>
+
+          {/* ERROR MESSAGE IF ANY */}
+          {memberLoginError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 flex items-start gap-2 text-left">
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+              <span>{memberLoginError}</span>
+            </div>
+          )}
+
+          {/* TAB 1: LOGIN (CAMERA SCAN PRIMARY AS IN SCREENSHOT) */}
+          {memberModalTab === 'login' ? (
+            <div className="space-y-4">
+              {/* WHITE CARD FOR PHYSICAL / QR SCAN */}
+              <div className="bg-white rounded-3xl border border-slate-200/90 p-5 sm:p-6 shadow-xs text-center space-y-3.5">
+                <div className="w-16 h-16 rounded-2xl bg-red-100/90 text-red-600 flex items-center justify-center mx-auto shadow-inner">
+                  <QrCode className="w-9 h-9" />
+                </div>
+
+                <div>
+                  <h4 className="text-xs sm:text-sm font-black text-slate-800 uppercase tracking-wider">
+                    VERIFIKASI SCAN FISIK / QR KARTU
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto leading-relaxed">
+                    Arahkan kamera ke Barcode atau QR Code pada Kartu Member fisik Anda untuk masuk dan cek poin belanja.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsMemberCardScannerOpen(true)}
+                  className="w-full py-3.5 bg-red-600 hover:bg-red-700 active:scale-98 text-white rounded-2xl font-black text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Camera className="w-4 h-4 sm:w-5 sm:h-5" />
+                  <span>Nyalakan Kamera &amp; Scan Barcode Member</span>
+                </button>
+
+                {/* TOGGLE FOR MANUAL INPUT (FALLBACK WITHOUT CAM) */}
+                <div className="pt-1">
+                  {!showManualLoginInput ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowManualLoginInput(true)}
+                      className="text-[11px] font-bold text-slate-400 hover:text-red-600 transition-colors cursor-pointer"
+                    >
+                      Atau masukkan No. HP / ID Member manual ▾
+                    </button>
+                  ) : (
+                    <form onSubmit={handleMemberLoginSubmit} className="space-y-2 pt-2 border-t border-slate-100 text-left">
+                      <label className="block text-[11px] font-extrabold text-slate-700">
+                        Ketik No. HP / ID Member / Barcode Kartu:
+                      </label>
+                      <div className="relative">
+                        <CreditCard className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                        <input
+                          type="text"
+                          required
+                          placeholder="Contoh: 081234567890 atau MBR-001"
+                          value={memberInput}
+                          onChange={(e) => setMemberInput(e.target.value)}
+                          className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white placeholder:text-slate-400"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={isSearchingCloudMember}
+                        className="w-full py-2.5 bg-slate-900 hover:bg-black text-white rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2"
+                      >
+                        {isSearchingCloudMember ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <span>Mencari Akun...</span>
+                          </>
+                        ) : (
+                          <span>Masuk Manual</span>
+                        )}
+                      </button>
+                    </form>
+                  )}
+                </div>
+              </div>
+
+              {/* BOTTOM FOOTER NAVIGATION */}
+              <div className="text-center pt-2">
+                <span className="text-xs font-semibold text-slate-500">Belum punya kartu member? </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMemberModalTab('register');
+                    setMemberLoginError(null);
+                  }}
+                  className="text-xs font-black text-red-600 hover:underline cursor-pointer"
+                >
+                  Daftar Akun Baru
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* TAB 2: REGISTER MEMBER BARU */
+            <div className="space-y-4 text-left">
+              <div className="bg-white rounded-3xl border border-slate-200/90 p-5 sm:p-6 shadow-xs space-y-3">
+                <h4 className="text-xs sm:text-sm font-black text-slate-800 uppercase tracking-wider text-center border-b border-slate-100 pb-2">
+                  PENDAFTARAN MEMBER BARU
+                </h4>
+
+                <form onSubmit={handleRegisterMemberSubmit} className="space-y-3">
+                  <div>
+                    <label className="block text-[11px] font-extrabold text-slate-700 mb-1">
+                      Nama Lengkap Pembeli <span className="text-red-600">*</span>
+                    </label>
+                    <div className="relative">
+                      <User className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+                      <input
+                        type="text"
+                        required
+                        placeholder="Contoh: Budi Santoso"
+                        value={regNama}
+                        onChange={(e) => setRegNama(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-extrabold text-slate-700 mb-1">
+                      Nomor HP / WhatsApp Aktif <span className="text-red-600">*</span>
+                    </label>
+                    <div className="relative">
+                      <Key className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+                      <input
+                        type="tel"
+                        required
+                        placeholder="Contoh: 081234567890"
+                        value={regPhone}
+                        onChange={(e) => setRegPhone(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white"
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Nomor WhatsApp digunakan untuk konfirmasi status pesanan dan klaim poin belanja.
+                    </p>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-3.5 bg-red-600 hover:bg-red-700 text-white rounded-2xl font-black text-xs sm:text-sm shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98 mt-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Daftar &amp; Langsung Belanja Online</span>
+                  </button>
+                </form>
+              </div>
+
+              {/* GREEN NOTICE BOX FOR NEW MEMBERS */}
+              <div className="p-4 bg-emerald-50 border border-emerald-200/80 rounded-2xl text-left flex items-start gap-2.5 shadow-3xs">
+                <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                <div className="text-xs text-slate-700 leading-relaxed">
+                  <span className="font-black text-emerald-950">Keuntungan Member: </span>
+                  <span>Dapatkan poin belanja di setiap pesanan online yang dapat ditukar dengan potongan belanja saat belanja di toko.</span>
+                </div>
+              </div>
+
+              {/* BOTTOM FOOTER */}
+              <div className="text-center pt-2">
+                <span className="text-xs font-semibold text-slate-500">Sudah punya kartu member? </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMemberModalTab('login');
+                    setMemberLoginError(null);
+                  }}
+                  className="text-xs font-black text-red-600 hover:underline cursor-pointer"
+                >
+                  Masuk Member
+                </button>
+              </div>
             </div>
           )}
         </div>
 
+        {/* SCANNER MODAL JIKA DIBUKA DARI PORTAL */}
+        {isMemberCardScannerOpen && (
+          <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[260] flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="bg-white w-full max-w-sm rounded-3xl p-5 shadow-2xl space-y-3.5 text-center relative border border-slate-100">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                <div className="flex items-center gap-2 text-slate-800">
+                  <Camera className="w-4 h-4 text-red-600" />
+                  <span className="font-black text-xs sm:text-sm">Scan Barcode / QR Kartu Member</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsMemberCardScannerOpen(false)}
+                  className="p-1 rounded-full hover:bg-slate-100 text-slate-500 transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <p className="text-xs text-slate-500">
+                Arahkan kamera ke Barcode atau QR Code pada Kartu Member fisik/digital Anda:
+              </p>
+
+              <div className="overflow-hidden rounded-2xl border-2 border-dashed border-red-300 bg-slate-950 min-h-[220px]">
+                <CameraScanner
+                  onScanSuccess={async (code) => {
+                    setIsMemberCardScannerOpen(false);
+                    const cleanCode = (code || '').trim();
+                    if (!cleanCode) return;
+
+                    let matched = findMember(cleanCode);
+                    if (!matched) {
+                      setIsSearchingCloudMember(true);
+                      try {
+                        matched = await searchMemberInCloud(activeStoreId, cleanCode);
+                        if (matched) {
+                          setCloudPelanggan(prev => {
+                            if (!prev.some(p => p.id === matched!.id)) {
+                              return [...prev, matched!];
+                            }
+                            return prev;
+                          });
+                        }
+                      } catch (e) {
+                        console.warn(e);
+                      } finally {
+                        setIsSearchingCloudMember(false);
+                      }
+                    }
+
+                    if (matched) {
+                      handleMemberLoginSubmit(undefined, matched);
+                    } else {
+                      setMemberLoginError(`Barcode/QR "${cleanCode}" tidak terdaftar di sistem toko.`);
+                    }
+                  }}
+                  onClose={() => setIsMemberCardScannerOpen(false)}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-800 pb-28 font-sans antialiased">
+      {/* HEADER STORE BRANDING & PROMO BANNERS - SCROLLABLE UPWARDS */}
+      <header id="store-header-top" className="bg-gradient-to-r from-red-700 via-rose-600 to-red-700 text-white shadow-md select-none">
+        <div className="max-w-4xl mx-auto px-3 sm:px-4 pt-2.5 pb-3 sm:py-3.5 flex flex-col items-center justify-center text-center relative">
+          
+          {/* POJOK KIRI ATAS: STATUS JAM OPERASIONAL TOKO */}
+          <div className="absolute top-2 left-2.5 sm:left-4 z-10">
+            <span className="inline-flex items-center gap-1 text-[10px] text-red-100 font-bold bg-black/30 px-2.5 py-0.5 rounded-full border border-white/10 shadow-3xs">
+              <Clock className="w-3 h-3 text-amber-300" />
+              <span>{storeOperatingHours}</span>
+            </span>
+          </div>
+
+          {/* POJOK KANAN ATAS: STATUS ONLINE (BUKA) & PREVIEW JIKA OWNER */}
+          <div className="absolute top-2 right-2.5 sm:right-4 z-10 flex items-center gap-1.5">
+            {isOwnerView && (
+              <span className="bg-white/15 backdrop-blur-md px-2 py-0.5 rounded-md border border-white/20 text-[9px] font-bold text-white hidden md:inline">
+                Preview
+              </span>
+            )}
+            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-3xs ${
+              isOnlineStatus ? 'bg-emerald-500/25 text-emerald-100 border border-emerald-400/40' : 'bg-rose-950 text-rose-200 border border-rose-500/40'
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${isOnlineStatus ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+              <span>{isOnlineStatus ? 'Online (Buka)' : 'Offline (Tutup)'}</span>
+            </span>
+          </div>
+
+          {/* POSISI TENGAH MENGGANTIKAN POSISI JAM: LENCANA YUK BELANJA ONLINE */}
+          <div className="flex items-center justify-center mt-5 sm:mt-1 mb-2">
+            <span className="bg-white text-red-700 font-black text-[10px] sm:text-[11px] px-3 py-0.5 rounded-md tracking-wider uppercase shadow-3xs flex items-center gap-1.5">
+              <ShoppingBag className="w-3.5 h-3.5 text-red-600 shrink-0" />
+              <span>Yuk Belanja Online</span>
+            </span>
+          </div>
+
+          {/* LOGO TAS BELANJA & PENULISAN SRC MASNGUD SEPERTI HEADER KASIR */}
+          <div className="flex flex-row items-center justify-center gap-2 sm:gap-3">
+            {/* SRC Logo with signature Shopping Bag */}
+            <div className="shrink-0 flex items-center h-8 sm:h-10 md:h-11">
+              <SrcLogo className="h-8 sm:h-10 md:h-11 w-auto" whiteVariant={true} />
+            </div>
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-black tracking-tight text-white flex items-center h-8 sm:h-10 md:h-11 uppercase">
+              {(() => {
+                const rawName = (config.namaToko || 'MASNGUD').trim();
+                if (rawName.toUpperCase().startsWith('SRC ')) {
+                  return rawName.substring(4).trim();
+                }
+                return rawName;
+              })()}
+            </h1>
+          </div>
+
+          {/* SLOGAN SEPERTI HEADER KASIR */}
+          <p className="text-[9px] sm:text-xs text-white font-bold uppercase tracking-widest mt-1">
+            Dekat Hemat dan Bersahabat
+          </p>
+
+          {/* ALAMAT & NOMOR TOKO */}
+          <p className="text-[11px] sm:text-xs text-red-100 opacity-90 mt-0.5 max-w-md mx-auto line-clamp-1">
+            {config.alamatToko || 'Jl.Suhada 2/3 Kebakalan 085850051070'}
+          </p>
+        </div>
+
         {/* MEMBER ACCOUNT HEADER BAR (KOLOM PELANGGAN) */}
-        <div className="bg-slate-900 text-white px-4 py-2 text-xs flex flex-wrap items-center justify-between gap-2 border-b border-slate-800">
+        <div className="bg-slate-900 text-white px-3 sm:px-4 py-2 text-xs flex flex-wrap items-center justify-between gap-2 border-b border-slate-800">
           {loggedInMember ? (
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap w-full sm:w-auto">
               <span className="bg-emerald-600 text-white font-extrabold px-2 py-0.5 rounded-full text-[10px] flex items-center gap-1 shadow-3xs">
                 <UserCheck className="w-3 h-3" /> Member SRC
               </span>
               <span className="bg-red-950 text-red-300 border border-red-500/40 font-black px-2 py-0.5 rounded-md text-[10px]">
                 🆔 {formatDisplayMemberId(loggedInMember)}
               </span>
-              <span className="font-extrabold text-white flex items-center gap-1">
+              <span className="font-extrabold text-white flex items-center gap-1 text-[11px] sm:text-xs">
                 <span>{loggedInMember.nama}</span>
               </span>
               <span className="bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-lg border border-amber-400/30 text-[10px] font-black flex items-center gap-1">
@@ -1270,56 +2005,37 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
                   </span>
                 )}
               </button>
+              {/* TOMBOL LOG OUT DISAMPING RIWAYAT PESANAN (BERUPA IKON PADA LAYAR KECIL / PORTRAIT) */}
+              <button
+                type="button"
+                onClick={handleMemberLogout}
+                className="p-1 sm:px-2.5 sm:py-0.5 bg-rose-500/20 hover:bg-rose-500/30 active:scale-95 text-rose-300 hover:text-white text-[10px] font-bold rounded-lg transition-all flex items-center gap-1 cursor-pointer border border-rose-500/40 shadow-3xs"
+                title="Keluar / Log Out Akun Member"
+              >
+                <LogOut className="w-3.5 h-3.5 text-rose-300" />
+                <span className="hidden sm:inline">Log Out</span>
+              </button>
             </div>
           ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-amber-400 font-bold flex items-center gap-1">
-                <Key className="w-3.5 h-3.5" /> Silakan Login ID Member / No. HP
-              </span>
-              <span className="text-slate-400 text-[11px] hidden sm:inline">
-                (Ketik ID Member atau Scan Kartu untuk kumpulkan poin)
-              </span>
+            <div className="flex items-center justify-between w-full">
+              <div className="flex items-center gap-2">
+                <span className="text-amber-400 font-bold flex items-center gap-1 text-[11px] sm:text-xs">
+                  <Key className="w-3.5 h-3.5" /> Silakan Login ID Member / No. HP
+                </span>
+                <span className="text-slate-400 text-[11px] hidden sm:inline">
+                  (Ketik ID Member atau Scan Kartu untuk kumpulkan poin)
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMemberModalOpen(true)}
+                className="px-2.5 py-1 bg-white/10 hover:bg-white/20 active:scale-95 text-white text-[11px] font-bold rounded-xl transition-all flex items-center gap-1 cursor-pointer border border-white/10"
+              >
+                <UserCheck className="w-3 h-3 text-amber-300" />
+                <span>Login Member</span>
+              </button>
             </div>
           )}
-
-          <div className="flex items-center gap-2 ml-auto">
-            {/* TOMBOL STATUS PESANAN DI HEADER */}
-            <button
-              type="button"
-              onClick={() => setIsOrderHistoryOpen(true)}
-              className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/40 active:scale-95 text-[11px] font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-3xs"
-              title="Cek Status & Riwayat Pesanan Online"
-            >
-              <Package className="w-3.5 h-3.5 text-amber-300" />
-              <span>Status Pesanan</span>
-              {activeOrdersCount > 0 ? (
-                <span className="bg-red-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full animate-pulse">
-                  {activeOrdersCount}
-                </span>
-              ) : buyerOrders.length > 0 ? (
-                <span className="bg-slate-800 text-slate-300 text-[9px] font-extrabold px-1.5 py-0.2 rounded-full">
-                  {buyerOrders.length}
-                </span>
-              ) : null}
-            </button>
-            <button
-              type="button"
-              onClick={() => loggedInMember ? handleMemberLogout() : setIsMemberModalOpen(true)}
-              className="px-2.5 py-1 bg-white/10 hover:bg-white/20 active:scale-95 text-white text-[11px] font-bold rounded-xl transition-all flex items-center gap-1 cursor-pointer border border-white/10"
-            >
-              {loggedInMember ? (
-                <>
-                  <LogOut className="w-3 h-3 text-rose-300" />
-                  <span>Log Out</span>
-                </>
-              ) : (
-                <>
-                  <UserCheck className="w-3 h-3 text-amber-300" />
-                  <span>Login Member</span>
-                </>
-              )}
-            </button>
-          </div>
         </div>
 
         {/* STORE OFFLINE BANNER - INFORM CUSTOMER TO SEND ORDER VIA WHATSAPP */}
@@ -1345,15 +2061,17 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
         {activePromoBanners.length > 0 && (
           <div className="bg-gradient-to-b from-red-950/90 to-red-900/40 border-t border-b border-red-500/30 px-3 py-3 text-white">
             <div className="max-w-4xl mx-auto space-y-2">
-              <div className="flex items-center justify-between px-1">
-                <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>PROMO &amp; PENAWARAN SPESIAL TOKO</span>
-                </span>
+              <div className="flex items-center justify-between px-1 gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>BANNER PROMOSI &amp; IKLAN TOKO</span>
+                  </span>
+                </div>
                 {activePromoBanners.length > 1 && (
-                  <div className="flex items-center gap-1.5 text-[10px] font-black text-amber-200">
-                    <span>{currentBannerIndex + 1} / {activePromoBanners.length}</span>
-                  </div>
+                  <span className="text-[10px] font-black text-amber-200 bg-black/40 px-2 py-0.5 rounded-full">
+                    {currentBannerIndex + 1} / {activePromoBanners.length}
+                  </span>
                 )}
               </div>
 
@@ -1376,11 +2094,30 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
                       {/* BANNER CONTENT CAPTION */}
                       <div className="absolute bottom-0 left-0 right-0 p-3 sm:p-4 text-left flex items-end justify-between gap-2">
                         <div className="min-w-0 flex-1">
-                          {banner.linkKategori && banner.linkKategori !== 'Semua' && (
-                            <span className="text-[9px] font-black bg-amber-500 text-slate-950 px-2 py-0.5 rounded-md uppercase tracking-wider inline-block mb-1 shadow-3xs">
-                              🏷️ {banner.linkKategori}
+                          <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider shadow-3xs flex items-center gap-1 ${
+                              banner.kategoriBanner === 'Iklan'
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-rose-600 text-white'
+                            }`}>
+                              {banner.kategoriBanner === 'Iklan' ? (
+                                <>
+                                  <Megaphone className="w-2.5 h-2.5" />
+                                  <span>IKLAN</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Tag className="w-2.5 h-2.5" />
+                                  <span>PROMO</span>
+                                </>
+                              )}
                             </span>
-                          )}
+                            {banner.linkKategori && banner.linkKategori !== 'Semua' && (
+                              <span className="text-[9px] font-black bg-amber-500 text-slate-950 px-2 py-0.5 rounded-md uppercase tracking-wider shadow-3xs">
+                                🏷️ {banner.linkKategori}
+                              </span>
+                            )}
+                          </div>
                           <h4 
                             onClick={() => setSelectedPromoModal(banner)}
                             className="text-xs sm:text-sm font-black text-white tracking-tight line-clamp-1 cursor-pointer hover:text-amber-300 transition-colors"
@@ -1395,24 +2132,40 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
                         </div>
 
                         <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleNavigateToPromoProduct(banner, false)}
-                            className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-[10px] font-black shadow-xs transition-all cursor-pointer flex items-center gap-1 active:scale-95"
-                            title="Lihat Produk Promo"
-                          >
-                            <span>Lihat Produk</span>
-                            <ArrowRight className="w-3 h-3" />
-                          </button>
+                          {banner.kategoriBanner === 'Iklan' ? (
+                            /* KATEGORI IKLAN: TIDAK ADA TOMBOL LANGSUNG CHECKOUT / BELI SEKARANG */
+                            <button
+                              type="button"
+                              onClick={() => handleNavigateToPromoProduct(banner, false)}
+                              className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-[10px] font-black shadow-xs transition-all cursor-pointer flex items-center gap-1 active:scale-95"
+                              title="Lihat Produk Lengkap"
+                            >
+                              <span>Lihat Produk Lengkap</span>
+                              <ArrowRight className="w-3 h-3" />
+                            </button>
+                          ) : (
+                            /* KATEGORI PROMO: ADA LIHAT PRODUK & LANGSUNG CHECKOUT */
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleNavigateToPromoProduct(banner, false)}
+                                className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-[10px] font-black shadow-xs transition-all cursor-pointer flex items-center gap-1 active:scale-95"
+                                title="Lihat Produk Promo"
+                              >
+                                <span>Lihat Produk</span>
+                                <ArrowRight className="w-3 h-3" />
+                              </button>
 
-                          <button
-                            type="button"
-                            onClick={() => handleNavigateToPromoProduct(banner, true)}
-                            className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded-xl text-[10px] font-black shadow-xs transition-all cursor-pointer flex items-center gap-1 active:scale-95"
-                            title="Langsung Masukkan Keranjang & Checkout"
-                          >
-                            <span>Langsung Checkout</span>
-                          </button>
+                              <button
+                                type="button"
+                                onClick={() => handleNavigateToPromoProduct(banner, true)}
+                                className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded-xl text-[10px] font-black shadow-xs transition-all cursor-pointer flex items-center gap-1 active:scale-95"
+                                title="Langsung Masukkan Keranjang & Checkout"
+                              >
+                                <span>Langsung Checkout</span>
+                              </button>
+                            </>
+                          )}
 
                           <button
                             type="button"
@@ -1729,25 +2482,28 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
 
       {/* FLOATING ACTION BUTTONS AT BOTTOM RIGHT (POJOK KANAN BAWAH) */}
       <div className={`fixed right-4 z-40 flex flex-col items-end gap-2.5 transition-all duration-300 ${cartDetails.length > 0 && !isCartOpen ? 'bottom-22' : 'bottom-5'}`}>
-        {/* FLOATING BUTTON STATUS PESANAN */}
-        <button
-          type="button"
-          onClick={() => setIsOrderHistoryOpen(true)}
-          className="bg-slate-900/95 hover:bg-slate-900 text-white px-3.5 py-2.5 rounded-2xl shadow-2xl border border-slate-700/80 font-black text-xs flex items-center gap-2 transition-all cursor-pointer active:scale-90 hover:scale-105 backdrop-blur-md"
-          title="Buka Status & Riwayat Pesanan Online"
-        >
-          <Clock className="w-4 h-4 text-amber-400" />
-          <span>Status Pesanan</span>
-          {activeOrdersCount > 0 ? (
-            <span className="bg-red-600 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
-              {activeOrdersCount} aktif
-            </span>
-          ) : buyerOrders.length > 0 ? (
-            <span className="bg-slate-800 text-slate-300 text-[10px] font-extrabold px-1.5 py-0.5 rounded-full">
-              {buyerOrders.length}
-            </span>
-          ) : null}
-        </button>
+        {/* FLOATING BUTTON STATUS PESANAN (DISEMBUNYIKAN JIKA PESANAN SUDAH SELESAI / TIDAK ADA PESANAN AKTIF) */}
+        {(activeOrdersCount > 0 || unsyncedOrdersCount > 0) && (
+          <button
+            type="button"
+            onClick={() => setIsOrderHistoryOpen(true)}
+            className="bg-slate-900/95 hover:bg-slate-900 text-white px-3.5 py-2.5 rounded-2xl shadow-2xl border border-slate-700/80 font-black text-xs flex items-center gap-2 transition-all cursor-pointer active:scale-90 hover:scale-105 backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200"
+            title="Buka Status Pesanan Aktif"
+          >
+            <Clock className="w-4 h-4 text-amber-400" />
+            <span>Status Pesanan</span>
+            {unsyncedOrdersCount > 0 ? (
+              <span className="bg-amber-500 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-full animate-bounce flex items-center gap-1">
+                <CloudOff className="w-3 h-3" />
+                {unsyncedOrdersCount} belum kirim
+              </span>
+            ) : (
+              <span className="bg-red-600 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
+                {activeOrdersCount} aktif
+              </span>
+            )}
+          </button>
+        )}
 
         {/* FLOATING "KEMBALI KE ATAS" BUTTON WHEN SCROLLED DOWN */}
         {showScrollTop && (
@@ -1943,14 +2699,6 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
                         </p>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleMemberLogout}
-                      className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[10px] font-bold transition-colors cursor-pointer flex items-center gap-1 shadow-3xs"
-                    >
-                      <LogOut className="w-3 h-3" />
-                      Log Out
-                    </button>
                   </div>
                 ) : (
                   <div className="bg-amber-50 border border-amber-200 p-3 rounded-2xl flex items-center justify-between text-xs mb-2">
@@ -2158,6 +2906,21 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
               </div>
             </div>
 
+            {/* CLOUD SYNC STATUS NOTICE */}
+            <div className="flex items-center justify-center">
+              {confirmedCloudOrderIds.has(placedOrder.id) || placedOrder.syncStatus === 'synced' ? (
+                <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-300 text-[11px] font-black flex items-center gap-1.5 shadow-3xs">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <span>Terkirim Langsung ke Kasir Toko ✓</span>
+                </span>
+              ) : (
+                <span className="px-3 py-1 rounded-full bg-amber-50 text-amber-900 border border-amber-300 text-[11px] font-black flex items-center gap-1.5 shadow-3xs animate-pulse">
+                  <CloudOff className="w-4 h-4 text-amber-600" />
+                  <span>Tersimpan di HP (Otomatis Dikirim saat Online)</span>
+                </span>
+              )}
+            </div>
+
             <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-900 text-left flex items-start gap-2">
               <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <p>
@@ -2200,303 +2963,320 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
         </div>
       )}
 
-      {/* MEMBER VERIFICATION MODAL */}
-      {isMemberModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/95 backdrop-blur-md z-[210] flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-4 text-left relative overflow-hidden">
-            
-            {/* CLOSE BUTTON (ONLY IF ALREADY LOGGED IN AS MEMBER) */}
-            {loggedInMember && (
-              <button
-                type="button"
-                onClick={() => setIsMemberModalOpen(false)}
-                className="absolute top-4 right-4 p-1.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
+      {/* MEMBER VERIFICATION & REGISTRATION PORTAL (HANDLED AS PRIMARY VIEW WHEN !loggedInMember) */}
+      {false && isMemberModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[210] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-md rounded-3xl p-5 sm:p-6 shadow-2xl space-y-4 text-center relative overflow-hidden border border-slate-100 max-h-[94vh] overflow-y-auto">
+            {/* FOTO BANNER UTAMA PORTAL PEMBELI: BANNER RESMI SRC MASNGUD & BANNER PROMO / IKLAN (SAMA POSISI) */}
+            <div className="w-full overflow-hidden rounded-2xl border border-red-100 shadow-md bg-white relative group">
+              <div className="relative w-full h-36 sm:h-44 overflow-hidden">
+                {portalHeaderBanners.map((banner, idx) => {
+                  if (idx !== portalBannerIndex) return null;
+                  return (
+                    <div key={banner.id} className="w-full h-full relative">
+                      <img
+                        src={banner.imageUrl}
+                        alt={banner.judul || 'Banner Toko'}
+                        className="w-full h-full object-cover object-center"
+                        referrerPolicy="no-referrer"
+                      />
 
-            <div className="text-center space-y-1.5">
-              <div className="w-12 h-12 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-xs">
-                <ShieldCheck className="w-7 h-7" />
-              </div>
-              <div>
-                <span className="text-[10px] font-black uppercase tracking-wider text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-200">
-                  {config.namaToko || 'TOKO SRC'}
-                </span>
-                <h3 className="text-base font-black text-slate-900 mt-1">
-                  Belanja Online Member
-                </h3>
-                <p className="text-xs text-slate-500 leading-relaxed mt-1">
-                  Scan barcode / QR kartu member fisik Anda menggunakan kamera untuk keamanan akun terjamin, atau buat akun member baru.
-                </p>
-              </div>
-            </div>
+                      {/* Lencana kategori jika banner promo / iklan (tanpa tombol langsung checkout, lihat produk, perbesar) */}
+                      {banner.kategoriBanner && (
+                        <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
+                          <span className={`text-[9.5px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider shadow-sm text-white flex items-center gap-1 ${
+                            banner.kategoriBanner === 'Iklan' ? 'bg-blue-600' : 'bg-rose-600'
+                          }`}>
+                            {banner.kategoriBanner === 'Iklan' ? (
+                              <>
+                                <Megaphone className="w-2.5 h-2.5" />
+                                <span>IKLAN</span>
+                              </>
+                            ) : (
+                              <>
+                                <Tag className="w-2.5 h-2.5" />
+                                <span>PROMO</span>
+                              </>
+                            )}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
 
-            {/* TAB SELECTOR: LOGIN VS REGISTER */}
-            <div className="grid grid-cols-2 p-1 bg-slate-100 rounded-xl text-xs font-bold">
-              <button
-                type="button"
-                onClick={() => {
-                  setMemberModalTab('login');
-                  setMemberLoginError(null);
-                }}
-                className={`py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                  memberModalTab === 'login'
-                    ? 'bg-white text-red-600 shadow-xs font-black'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <UserCheck className="w-3.5 h-3.5" />
-                <span>🔑 Masuk Member</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMemberModalTab('register');
-                  setMemberLoginError(null);
-                  if (memberInput) {
-                    if (/^\d+$/.test(memberInput.replace(/[^0-9]/g, ''))) {
-                      setRegPhone(memberInput);
-                    } else {
-                      setRegNama(memberInput);
-                    }
-                  }
-                }}
-                className={`py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                  memberModalTab === 'register'
-                    ? 'bg-white text-red-600 shadow-xs font-black'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>📝 Daftar Member Baru</span>
-              </button>
-            </div>
-
-            {/* ERROR MESSAGE */}
-            {memberLoginError && (
-              <div className="p-3 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800 space-y-2">
-                <div className="flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                  <p className="font-semibold">{memberLoginError}</p>
-                </div>
-                {memberModalTab === 'login' && (
-                  <div className="pt-1">
+                {/* NAVIGASI PANAH JIKA LEBIH DARI 1 BANNER */}
+                {portalHeaderBanners.length > 1 && (
+                  <>
                     <button
                       type="button"
-                      onClick={() => {
-                        setMemberModalTab('register');
-                        if (/^\d+$/.test(memberInput.replace(/[^0-9]/g, ''))) {
-                          setRegPhone(memberInput);
-                        } else {
-                          setRegNama(memberInput);
-                        }
-                        setMemberLoginError(null);
-                      }}
-                      className="w-full py-2 px-3 bg-red-600 hover:bg-red-700 text-white font-extrabold text-[11px] rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                      onClick={() => setPortalBannerIndex((prev) => (prev - 1 + portalHeaderBanners.length) % portalHeaderBanners.length)}
+                      className="absolute left-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-slate-900/60 hover:bg-slate-900 text-white backdrop-blur-xs transition-all cursor-pointer opacity-80 group-hover:opacity-100"
+                      title="Banner Sebelumnya"
                     >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Daftar Akun Member Baru Sekarang</span>
+                      <ChevronLeft className="w-3.5 h-3.5" />
                     </button>
-                  </div>
+                    <button
+                      type="button"
+                      onClick={() => setPortalBannerIndex((prev) => (prev + 1) % portalHeaderBanners.length)}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-slate-900/60 hover:bg-slate-900 text-white backdrop-blur-xs transition-all cursor-pointer opacity-80 group-hover:opacity-100"
+                      title="Banner Berikutnya"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+
+                    {/* INDIKATOR TITIK (DOTS) */}
+                    <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-black/40 px-2 py-1 rounded-full backdrop-blur-xs">
+                      {portalHeaderBanners.map((b, i) => (
+                        <button
+                          key={b.id}
+                          type="button"
+                          onClick={() => setPortalBannerIndex(i)}
+                          className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                            i === portalBannerIndex ? 'w-4 bg-white' : 'w-1.5 bg-white/40 hover:bg-white/70'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                  </>
                 )}
+              </div>
+            </div>
+
+            {/* HEADER YUK BELANJA ONLINE SRC MASNGUD DEKAT HEMAT DAN BERSAHABAT SEPERTI HEADER KATALOG */}
+            <div className="bg-gradient-to-r from-red-700 via-rose-600 to-red-700 text-white rounded-2xl py-3 px-3 sm:px-4 shadow-sm text-center">
+              {/* LENCANA YUK BELANJA ONLINE */}
+              <div className="flex items-center justify-center mb-1.5">
+                <span className="bg-white text-red-700 font-black text-[10px] sm:text-[11px] px-3 py-0.5 rounded-md tracking-wider uppercase shadow-3xs flex items-center gap-1.5">
+                  <ShoppingBag className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                  <span>Yuk Belanja Online</span>
+                </span>
+              </div>
+
+              {/* LOGO TAS BELANJA & PENULISAN SRC MASNGUD SEPERTI HEADER KASIR & KATALOG */}
+              <div className="flex flex-row items-center justify-center gap-2 sm:gap-2.5">
+                <div className="shrink-0 flex items-center h-7 sm:h-8">
+                  <SrcLogo className="h-7 sm:h-8 w-auto" whiteVariant={true} />
+                </div>
+                <h2 className="text-lg sm:text-xl md:text-2xl font-black tracking-tight text-white flex items-center h-7 sm:h-8 uppercase">
+                  {(() => {
+                    const rawName = (config.namaToko || 'MASNGUD').trim();
+                    if (rawName.toUpperCase().startsWith('SRC ')) {
+                      return rawName.substring(4).trim();
+                    }
+                    return rawName;
+                  })()}
+                </h2>
+              </div>
+
+              {/* SLOGAN SEPERTI HEADER KASIR & KATALOG */}
+              <p className="text-[9px] sm:text-xs text-white font-bold uppercase tracking-widest mt-1">
+                Dekat Hemat dan Bersahabat
+              </p>
+
+              {/* ALAMAT & NOMOR TOKO */}
+              <p className="text-[10.5px] sm:text-xs text-red-100 opacity-90 mt-0.5 max-w-xs mx-auto line-clamp-1">
+                {config.alamatToko || 'Jl.Suhada 2/3 Kebakalan 085850051070'}
+              </p>
+            </div>
+
+            {/* STATUS PILL BAR: JAM BUKA 07.00 - 21.00 & ONLINE */}
+            <div className="bg-slate-50 border border-slate-200/90 rounded-2xl px-4 py-2.5 flex items-center justify-between shadow-3xs text-left">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-red-500 shrink-0" />
+                <span className="text-xs font-extrabold text-slate-700">Jam Buka 07.00 - 21.00</span>
+              </div>
+              <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black ${
+                isOnlineStatus 
+                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
+                  : 'bg-rose-100 text-rose-800 border border-rose-300'
+              }`}>
+                <span className={`w-2 h-2 rounded-full ${isOnlineStatus ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                <span>{isOnlineStatus ? 'Online' : 'Offline'}</span>
+              </div>
+            </div>
+
+            {/* ERROR MESSAGE IF ANY */}
+            {memberLoginError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 flex items-start gap-2 text-left">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                <span>{memberLoginError}</span>
               </div>
             )}
 
-            {/* TAB 1: LOGIN (KAMERA SCAN BARCODE KARTU FISIK UNTUK PRIVASI & KEAMANAN) */}
+            {/* TAB 1: LOGIN (CAMERA SCAN PRIMARY AS IN SCREENSHOT) */}
             {memberModalTab === 'login' ? (
               <div className="space-y-4">
-                {/* JAM BUKA OPERASIONAL TOKO & STATUS ONLINE (PENYAMARAN DATA CLOUD TOKO) */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-[11px] shadow-3xs">
-                    <span className="text-slate-700 font-bold flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-red-600 shrink-0" />
-                      <span>Jam Buka Toko: {storeOperatingHours}</span>
-                    </span>
-                    {isOnlineStatus ? (
-                      <span className="flex items-center gap-1.5 font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-2.5 py-0.5 rounded-full text-[10px]">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                        Online
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1.5 font-black text-rose-700 bg-rose-100 border border-rose-300 px-2.5 py-0.5 rounded-full text-[10px]">
-                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-                        Offline
-                      </span>
-                    )}
+                {/* WHITE CARD FOR PHYSICAL / QR SCAN */}
+                <div className="bg-white rounded-3xl border border-slate-200/90 p-5 sm:p-6 shadow-xs text-center space-y-3.5">
+                  <div className="w-16 h-16 rounded-2xl bg-red-100/90 text-red-600 flex items-center justify-center mx-auto shadow-inner">
+                    <QrCode className="w-9 h-9" />
                   </div>
 
-                  {/* NOTIFIKASI OFFLINE: BERI TAHU BISA KIRIM PESANAN VIA WHATSAPP */}
-                  {!isOnlineStatus && (
-                    <div className="p-3 bg-amber-50/95 border border-amber-300/80 rounded-2xl text-xs text-amber-950 space-y-2 animate-in fade-in duration-200 shadow-3xs">
-                      <div className="flex items-start gap-2.5">
-                        <MessageCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                        <div className="space-y-0.5 flex-1">
-                          <p className="font-extrabold text-amber-900 text-xs">
-                            Layanan Online Toko Sedang Offline
-                          </p>
-                          <p className="text-[11px] text-amber-800 leading-relaxed">
-                            Sistem online toko sedang offline atau di luar jam operasional. Anda tetap bisa berbelanja dan langsung mengirimkan pesanan belanja online via WhatsApp ke kasir toko!
-                          </p>
-                        </div>
-                      </div>
-                      <a
-                        href={whatsappOrderGeneralUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-[11px] rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1.5 shadow-xs"
-                      >
-                        <MessageCircle className="w-3.5 h-3.5" />
-                        <span>Kirim Pesanan via WhatsApp Kasir ({displayWhatsAppNumber})</span>
-                      </a>
-                    </div>
-                  )}
-                </div>
-
-                {/* CAMERA SCANNER */}
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-center space-y-3">
-                  <div className="w-14 h-14 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-xs">
-                    <QrCode className="w-8 h-8" />
-                  </div>
                   <div>
-                    <h4 className="font-extrabold text-xs text-slate-800 uppercase tracking-wider">
-                      Verifikasi Scan Fisik / QR Kartu
+                    <h4 className="text-xs sm:text-sm font-black text-slate-800 uppercase tracking-wider">
+                      VERIFIKASI SCAN FISIK / QR KARTU
                     </h4>
-                    <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                    <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto leading-relaxed">
                       Arahkan kamera ke Barcode atau QR Code pada Kartu Member fisik Anda untuk masuk dan cek poin belanja.
                     </p>
                   </div>
 
                   <button
                     type="button"
-                    onClick={() => {
-                      setMemberLoginError(null);
-                      setIsMemberCardScannerOpen(true);
-                    }}
-                    className="w-full py-3.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white rounded-xl font-extrabold text-xs shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98"
+                    onClick={() => setIsMemberCardScannerOpen(true)}
+                    className="w-full py-3.5 bg-red-600 hover:bg-red-700 active:scale-98 text-white rounded-2xl font-black text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    <Camera className="w-5 h-5 text-white animate-pulse" />
+                    <Camera className="w-4 h-4 sm:w-5 sm:h-5" />
                     <span>Nyalakan Kamera &amp; Scan Barcode Member</span>
                   </button>
+
+                  {/* TOGGLE FOR MANUAL INPUT (FALLBACK WITHOUT CAM) */}
+                  <div className="pt-1">
+                    {!showManualLoginInput ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowManualLoginInput(true)}
+                        className="text-[11px] font-bold text-slate-400 hover:text-red-600 transition-colors cursor-pointer"
+                      >
+                        Atau masukkan No. HP / ID Member manual ▾
+                      </button>
+                    ) : (
+                      <form onSubmit={handleMemberLoginSubmit} className="space-y-2 pt-2 border-t border-slate-100 text-left">
+                        <label className="block text-[11px] font-extrabold text-slate-700">
+                          Ketik No. HP / ID Member / Barcode Kartu:
+                        </label>
+                        <div className="relative">
+                          <CreditCard className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                          <input
+                            type="text"
+                            required
+                            placeholder="Contoh: 081234567890 atau MBR-001"
+                            value={memberInput}
+                            onChange={(e) => setMemberInput(e.target.value)}
+                            className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white placeholder:text-slate-400"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={isSearchingCloudMember}
+                          className="w-full py-2.5 bg-slate-900 hover:bg-black text-white rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2"
+                        >
+                          {isSearchingCloudMember ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <span>Mencari Akun...</span>
+                            </>
+                          ) : (
+                            <span>Masuk Manual</span>
+                          )}
+                        </button>
+                      </form>
+                    )}
+                  </div>
                 </div>
 
-                {/* PRIVACY PROTECTION BADGE */}
-                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-start gap-2 text-left text-emerald-900">
-                  <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                  <p className="text-[11px] leading-relaxed">
-                    <strong>Privasi Member Terlindungi:</strong> Kolom pencarian publik dinonaktifkan demi menjaga kerahasiaan nomor WhatsApp dan data pribadi pelanggan. Akses login hanya dapat dibuka dengan memindai kartu fisik asli milik Anda.
-                  </p>
-                </div>
-
-                <div className="text-center pt-1">
+                {/* BOTTOM FOOTER NAVIGATION */}
+                <div className="text-center pt-2">
+                  <span className="text-xs font-semibold text-slate-500">Belum punya kartu member? </span>
                   <button
                     type="button"
                     onClick={() => {
                       setMemberModalTab('register');
                       setMemberLoginError(null);
                     }}
-                    className="text-xs font-bold text-slate-500 hover:text-red-600 transition-colors cursor-pointer"
+                    className="text-xs font-black text-red-600 hover:underline cursor-pointer"
                   >
-                    Belum punya kartu member? <span className="text-red-600 font-extrabold underline">Daftar Akun Baru</span>
+                    Daftar Akun Baru
                   </button>
                 </div>
               </div>
             ) : (
-              /* TAB 2: REGISTER NEW MEMBER */
-              <form onSubmit={handleRegisterMemberSubmit} className="space-y-3">
-                {/* JAM BUKA OPERASIONAL TOKO & STATUS ONLINE DI TAB DAFTAR */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-[11px] shadow-3xs">
-                    <span className="text-slate-700 font-bold flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-red-600 shrink-0" />
-                      <span>Jam Buka Toko: {storeOperatingHours}</span>
-                    </span>
-                    {isOnlineStatus ? (
-                      <span className="flex items-center gap-1.5 font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-2.5 py-0.5 rounded-full text-[10px]">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                        Online
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1.5 font-black text-rose-700 bg-rose-100 border border-rose-300 px-2.5 py-0.5 rounded-full text-[10px]">
-                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-                        Offline
-                      </span>
-                    )}
-                  </div>
+              /* TAB 2: REGISTER MEMBER BARU */
+              <div className="space-y-4 text-left">
+                <div className="bg-white rounded-3xl border border-slate-200/90 p-5 sm:p-6 shadow-xs space-y-3">
+                  <h4 className="text-xs sm:text-sm font-black text-slate-800 uppercase tracking-wider text-center border-b border-slate-100 pb-2">
+                    PENDAFTARAN MEMBER BARU
+                  </h4>
 
-                  {!isOnlineStatus && (
-                    <div className="p-3 bg-amber-50/95 border border-amber-300/80 rounded-2xl text-xs text-amber-950 space-y-2 animate-in fade-in duration-200 shadow-3xs">
-                      <div className="flex items-start gap-2.5">
-                        <MessageCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                        <div className="space-y-0.5 flex-1">
-                          <p className="font-extrabold text-amber-900 text-xs">
-                            Toko Sedang Offline / Tutup
-                          </p>
-                          <p className="text-[11px] text-amber-800 leading-relaxed">
-                            Jangan khawatir, Anda tetap bisa berbelanja dan langsung mengirimkan pesanan belanja online via WhatsApp ke kasir toko!
-                          </p>
-                        </div>
+                  <form onSubmit={handleRegisterMemberSubmit} className="space-y-3">
+                    <div>
+                      <label className="block text-[11px] font-extrabold text-slate-700 mb-1">
+                        Nama Lengkap Pembeli <span className="text-red-600">*</span>
+                      </label>
+                      <div className="relative">
+                        <User className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+                        <input
+                          type="text"
+                          required
+                          placeholder="Contoh: Budi Santoso"
+                          value={regNama}
+                          onChange={(e) => setRegNama(e.target.value)}
+                          className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white"
+                        />
                       </div>
-                      <a
-                        href={whatsappOrderGeneralUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-[11px] rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1.5 shadow-xs"
-                      >
-                        <MessageCircle className="w-3.5 h-3.5" />
-                        <span>Kirim Pesanan via WhatsApp Kasir ({displayWhatsAppNumber})</span>
-                      </a>
                     </div>
-                  )}
+
+                    <div>
+                      <label className="block text-[11px] font-extrabold text-slate-700 mb-1">
+                        Nomor HP / WhatsApp Aktif <span className="text-red-600">*</span>
+                      </label>
+                      <div className="relative">
+                        <Key className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+                        <input
+                          type="tel"
+                          required
+                          placeholder="Contoh: 081234567890"
+                          value={regPhone}
+                          onChange={(e) => setRegPhone(e.target.value)}
+                          className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white"
+                        />
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Nomor WhatsApp digunakan untuk konfirmasi status pesanan dan klaim poin belanja.
+                      </p>
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full py-3.5 bg-red-600 hover:bg-red-700 text-white rounded-2xl font-black text-xs sm:text-sm shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98 mt-2"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Daftar &amp; Langsung Belanja Online</span>
+                    </button>
+                  </form>
                 </div>
 
-                <div>
-                  <label className="block text-[11px] font-extrabold text-slate-700 mb-1">
-                    Nama Lengkap Pembeli <span className="text-red-500">*</span>
-                  </label>
-                  <div className="relative">
-                    <User className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
-                    <input
-                      type="text"
-                      required
-                      placeholder="Contoh: Budi Santoso"
-                      value={regNama}
-                      onChange={(e) => setRegNama(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"
-                    />
+                {/* GREEN NOTICE BOX FOR NEW MEMBERS */}
+                <div className="p-4 bg-emerald-50 border border-emerald-200/80 rounded-2xl text-left flex items-start gap-2.5 shadow-3xs">
+                  <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                  <div className="text-xs text-slate-700 leading-relaxed">
+                    <span className="font-black text-emerald-950">Keuntungan Member: </span>
+                    <span>Dapatkan poin belanja di setiap pesanan online yang dapat ditukar dengan potongan belanja saat belanja di toko.</span>
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-[11px] font-extrabold text-slate-700 mb-1">
-                    Nomor HP / WhatsApp Aktif <span className="text-red-500">*</span>
-                  </label>
-                  <div className="relative">
-                    <Key className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
-                    <input
-                      type="tel"
-                      required
-                      placeholder="Contoh: 081234567890"
-                      value={regPhone}
-                      onChange={(e) => setRegPhone(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"
-                    />
-                  </div>
+                {/* BOTTOM FOOTER */}
+                <div className="text-center pt-2">
+                  <span className="text-xs font-semibold text-slate-500">Sudah punya kartu member? </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMemberModalTab('login');
+                      setMemberLoginError(null);
+                    }}
+                    className="text-xs font-black text-red-600 hover:underline cursor-pointer"
+                  >
+                    Masuk Member
+                  </button>
                 </div>
-
-                <button
-                  type="submit"
-                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-extrabold text-xs shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Daftar &amp; Langsung Belanja Online</span>
-                </button>
-              </form>
+              </div>
             )}
           </div>
         </div>
       )}
+
+
 
       {/* 1. DIGITAL MEMBER CARD MODAL */}
       {isDigitalCardOpen && loggedInMember && (
@@ -2687,7 +3467,7 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
                   if (matched) {
                     handleMemberLoginSubmit(undefined, matched);
                   } else {
-                    setMemberLoginError(`Barcode/QR "${cleanCode}" tidak terdaftar di database cloud toko.`);
+                    setMemberLoginError(`Barcode/QR "${cleanCode}" tidak terdaftar di sistem toko.`);
                     setIsMemberModalOpen(true);
                   }
                 }}
@@ -2742,12 +3522,21 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
           >
             <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-white">
               <div className="flex items-center gap-2">
-                <span className="p-1.5 bg-amber-500 text-slate-950 rounded-xl">
-                  <Sparkles className="w-4 h-4" />
+                <span className={`p-1.5 rounded-xl text-white ${
+                  selectedPromoModal.kategoriBanner === 'Iklan' ? 'bg-blue-600' : 'bg-rose-600'
+                }`}>
+                  {selectedPromoModal.kategoriBanner === 'Iklan' ? <Megaphone className="w-4 h-4" /> : <Tag className="w-4 h-4" />}
                 </span>
-                <span className="font-extrabold text-sm text-white truncate">
-                  {selectedPromoModal.judul}
-                </span>
+                <div className="min-w-0">
+                  <span className={`text-[9px] font-black uppercase px-2 py-0.2 rounded-full inline-block mb-0.5 ${
+                    selectedPromoModal.kategoriBanner === 'Iklan' ? 'bg-blue-500/30 text-blue-300' : 'bg-rose-500/30 text-rose-300'
+                  }`}>
+                    {selectedPromoModal.kategoriBanner === 'Iklan' ? '📢 Iklan Toko' : '🏷️ Promo Toko'}
+                  </span>
+                  <div className="font-extrabold text-sm text-white truncate">
+                    {selectedPromoModal.judul}
+                  </div>
+                </div>
               </div>
               <button
                 type="button"
@@ -2773,22 +3562,37 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
             )}
 
             <div className="flex flex-col sm:flex-row items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => handleNavigateToPromoProduct(selectedPromoModal, true)}
-                className="w-full sm:flex-1 py-2.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white rounded-2xl font-black text-xs shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98"
-              >
-                <span>⚡ Langsung Checkout (Beli Sekarang)</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
+              {selectedPromoModal.kategoriBanner === 'Iklan' ? (
+                /* KATEGORI IKLAN: TIDAK ADA TOMBOL LANGSUNG CHECKOUT (BELI SEKARANG), HANYA LIHAT PRODUK LENGKAP */
+                <button
+                  type="button"
+                  onClick={() => handleNavigateToPromoProduct(selectedPromoModal, false)}
+                  className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 active:scale-98 text-slate-950 rounded-2xl font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-md"
+                >
+                  <Eye className="w-4 h-4" />
+                  <span>🔍 Lihat Produk Lengkap</span>
+                </button>
+              ) : (
+                /* KATEGORI PROMO: MENAMPILKAN TOMBOL CHECKOUT LANGSUNG DAN LIHAT PRODUK LENGKAP */
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleNavigateToPromoProduct(selectedPromoModal, true)}
+                    className="w-full sm:flex-1 py-2.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white rounded-2xl font-black text-xs shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98"
+                  >
+                    <span>⚡ Langsung Checkout (Beli Sekarang)</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => handleNavigateToPromoProduct(selectedPromoModal, false)}
-                className="w-full sm:flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-2xl font-black text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5"
-              >
-                <span>🔍 Lihat Produk Lengkap</span>
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNavigateToPromoProduct(selectedPromoModal, false)}
+                    className="w-full sm:flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-2xl font-black text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <span>🔍 Lihat Produk Lengkap</span>
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -2957,11 +3761,56 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
                     {buyerOrders.filter(o => o.status === 'Dibatalkan').length}
                   </span>
                 </button>
+
+                {unsyncedOrdersCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setOrderFilterTab('offline')}
+                    className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                      orderFilterTab === 'offline'
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200'
+                    }`}
+                  >
+                    <CloudOff className="w-3.5 h-3.5 text-amber-700" />
+                    <span>Belum di Kasir</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full font-black bg-red-600 text-white animate-bounce">
+                      {unsyncedOrdersCount}
+                    </span>
+                  </button>
+                )}
               </div>
             </div>
 
             {/* ORDERS LIST CONTAINER */}
             <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3.5 bg-slate-100/60">
+              {/* UNSYNCED OFFLINE ORDERS BANNER */}
+              {unsyncedOrdersCount > 0 && (
+                <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-2xl p-3 sm:p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                  <div className="flex items-start gap-2.5">
+                    <div className="p-2 bg-amber-500 text-white rounded-xl shrink-0 mt-0.5 animate-pulse shadow-xs">
+                      <CloudOff className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="font-black text-xs text-amber-950 block">
+                        {unsyncedOrdersCount} Pesanan Tersimpan di HP (Belum Masuk Kasir)
+                      </span>
+                      <span className="text-[11px] text-amber-800 leading-tight block mt-0.5">
+                        Pesanan dibuat saat koneksi offline. Tekan tombol di samping untuk langsung menyinkronkan ke kasir toko.
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => syncAllPendingOrders(true)}
+                    disabled={isSyncingAllPending}
+                    className="px-3.5 py-2 bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-700 hover:to-amber-700 active:scale-95 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAllPending ? 'animate-spin' : ''}`} />
+                    <span>{isSyncingAllPending ? 'Mengirim ke Kasir...' : '🚀 Kirim Semua ke Kasir'}</span>
+                  </button>
+                </div>
+              )}
               {filteredOrders.length === 0 ? (
                 <div className="bg-white rounded-2xl p-8 text-center space-y-3 border border-slate-200 shadow-xs my-4">
                   <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center mx-auto text-slate-400">
@@ -3033,11 +3882,14 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
                   const totalItemsInOrder = order.items.length;
                   const checkedCountInOrder = order.items.filter((_, idx) => !!crosscheckedItems[`${order.id}_${idx}`]).length;
                   const isAllOrderChecked = totalItemsInOrder > 0 && checkedCountInOrder === totalItemsInOrder;
+                  const isConfirmedInCloud = confirmedCloudOrderIds.has(order.id) || order.syncStatus === 'synced';
 
                   return (
                     <div
                       key={order.id}
-                      className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden transition-all hover:border-slate-300"
+                      className={`bg-white rounded-2xl border shadow-xs overflow-hidden transition-all ${
+                        !isConfirmedInCloud ? 'border-amber-300 ring-2 ring-amber-100' : 'border-slate-200/80 hover:border-slate-300'
+                      }`}
                     >
                       {/* CARD HEADER */}
                       <div className="p-3.5 sm:p-4 bg-slate-50/70 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
@@ -3064,10 +3916,24 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
                           </div>
                         </div>
 
-                        {/* STATUS BADGE */}
-                        <div className={`px-2.5 py-1 rounded-xl border text-xs font-black flex items-center gap-1.5 shadow-3xs ${statusColor}`}>
-                          {statusIcon}
-                          <span>{order.status}</span>
+                        {/* CLOUD & STATUS BADGE */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {isConfirmedInCloud ? (
+                            <span className="px-2 py-1 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10.5px] font-black flex items-center gap-1 shadow-3xs" title="Pesanan ini telah tersinkron langsung ke kasir toko">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Kasir Cloud ✓</span>
+                            </span>
+                          ) : (
+                            <span className="px-2 py-1 rounded-xl bg-rose-50 text-rose-800 border border-rose-300 text-[10.5px] font-black flex items-center gap-1 shadow-3xs animate-pulse" title="Pesanan tersimpan di HP ini, belum masuk ke cloud kasir toko karena saat checkout offline">
+                              <CloudOff className="w-3.5 h-3.5 text-rose-600" />
+                              <span>Belum Masuk Kasir</span>
+                            </span>
+                          )}
+
+                          <div className={`px-2.5 py-1 rounded-xl border text-xs font-black flex items-center gap-1.5 shadow-3xs ${statusColor}`}>
+                            {statusIcon}
+                            <span>{order.status}</span>
+                          </div>
                         </div>
                       </div>
 
@@ -3104,6 +3970,45 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
 
                       {/* DETAILS & ITEMS LIST */}
                       <div className="p-3.5 sm:p-4 space-y-3">
+                        {/* OFFLINE NOTICE & QUICK RETRY */}
+                        {!isConfirmedInCloud && (
+                          <div className="p-3 bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-xl space-y-2.5">
+                            <div className="flex items-start gap-2">
+                              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                              <div className="text-[11px] text-amber-950">
+                                <span className="font-extrabold block text-amber-900">
+                                  Pesanan ini belum masuk ke kasir toko
+                                </span>
+                                <span className="text-amber-800 leading-tight block mt-0.5">
+                                  Pesanan dibuat saat Anda sedang offline. Tekan tombol kirim di bawah agar kasir toko dapat menerima dan menyiapkan pesanan Anda.
+                                </span>
+                              </div>
+                            </div>
+                            <div className="flex flex-col sm:flex-row items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleRetrySyncOrder(order)}
+                                disabled={syncingOrderIds[order.id]}
+                                className="w-full sm:flex-1 py-2 px-3 bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-700 hover:to-amber-700 active:scale-98 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                              >
+                                <RefreshCw className={`w-3.5 h-3.5 ${syncingOrderIds[order.id] ? 'animate-spin' : ''}`} />
+                                <span>
+                                  {syncingOrderIds[order.id] ? 'Mengirim ke Kasir Cloud...' : '🚀 Kirim Pesanan Ini ke Kasir Cloud'}
+                                </span>
+                              </button>
+                              <a
+                                href={getOrderInquiryWhatsAppUrl(order)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="w-full sm:w-auto py-2 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                              >
+                                <MessageCircle className="w-3.5 h-3.5" />
+                                <span>Kirim via WA</span>
+                              </a>
+                            </div>
+                          </div>
+                        )}
+
                         {/* DELIVERY & PAYMENT META */}
                         <div className="flex flex-wrap items-center gap-2 text-[11px]">
                           <span className={`px-2 py-0.5 rounded-md font-bold flex items-center gap-1 ${
@@ -3286,6 +4191,20 @@ Mohon diproses ya Kak, Terima Kasih! 🙏`;
                           </div>
 
                           <div className="flex items-center gap-2 flex-wrap">
+                            {/* TOMBOL RETRY SYNC JIKA BELUM MASUK KASIR */}
+                            {!isConfirmedInCloud && (
+                              <button
+                                type="button"
+                                onClick={() => handleRetrySyncOrder(order)}
+                                disabled={syncingOrderIds[order.id]}
+                                className="px-3 py-1.5 bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-700 hover:to-amber-700 active:scale-95 text-white font-extrabold text-xs rounded-xl shadow-3xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                title="Kirim pesanan ini ke kasir cloud sekarang"
+                              >
+                                <RefreshCw className={`w-3.5 h-3.5 ${syncingOrderIds[order.id] ? 'animate-spin' : ''}`} />
+                                <span>{syncingOrderIds[order.id] ? 'Mengirim...' : 'Kirim ke Kasir'}</span>
+                              </button>
+                            )}
+
                             {/* TOMBOL TANYA KASIR WHATSAPP */}
                             <a
                               href={getOrderInquiryWhatsAppUrl(order)}

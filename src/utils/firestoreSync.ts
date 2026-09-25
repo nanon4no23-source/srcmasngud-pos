@@ -708,6 +708,14 @@ export const listenToStoreForBuyer = (
   };
 };
 
+// Helper to prevent hanging Firestore network calls during offline/spotty connections
+const withTimeout = <T>(promise: Promise<T>, ms = 8000): Promise<T> => {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Koneksi timeout (offline)')), ms))
+  ]);
+};
+
 /**
  * Submit an online order directly to the store's cloud database from customer device.
  * Dual-pushes to the targeted store path, primary store path (store_nanon4no23_gmail_com),
@@ -717,14 +725,19 @@ export const submitBuyerOrder = async (storeId: string, order: PesananOnline): P
   const targetId = storeId || resolveStoreId();
   const canonicalId = 'store_nanon4no23_gmail_com';
   const candidateTargets = Array.from(new Set([targetId, canonicalId].filter(Boolean)));
-  const sanitized = sanitizeForFirestore(order);
+  const payloadToSync: PesananOnline = {
+    ...order,
+    syncStatus: 'synced',
+    syncedAt: new Date().toISOString()
+  };
+  const sanitized = sanitizeForFirestore(payloadToSync);
   let anySuccess = false;
 
   await Promise.allSettled([
     ...candidateTargets.map(async (tid) => {
       try {
         const docRef = doc(db, `users/${tid}/pesanan_online`, order.id);
-        await setDoc(docRef, sanitized);
+        await withTimeout(setDoc(docRef, sanitized));
         anySuccess = true;
       } catch (err) {
         console.warn(`Could not push order to users/${tid}/pesanan_online:`, err);
@@ -733,7 +746,7 @@ export const submitBuyerOrder = async (storeId: string, order: PesananOnline): P
     (async () => {
       try {
         const rootRef = doc(db, 'pesanan_online', order.id);
-        await setDoc(rootRef, { ...sanitized, storeId: targetId });
+        await withTimeout(setDoc(rootRef, { ...sanitized, storeId: targetId }));
         anySuccess = true;
       } catch (err) {
         console.warn('Could not push order to root pesanan_online collection:', err);

@@ -6,8 +6,9 @@ import {
   MessageCircle, Printer, Share2, AlertCircle, Eye, ChevronRight,
   Filter, Search, QrCode, Copy, Check, Edit3, Trash2, Plus, Minus, X, PackageX,
   Image as ImageIcon, Upload, Sparkles, Power, Tag, ArrowUpRight, Link2, Globe, ExternalLink,
-  RefreshCw, FileText
+  RefreshCw, FileText, Megaphone
 } from 'lucide-react';
+import webOrderBannerImg from '../assets/web_order_banner.jpg';
 
 interface PesananOnlineManagerProps {
   orders: PesananOnline[];
@@ -268,15 +269,26 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
   const [isPromoBannerModalOpen, setIsPromoBannerModalOpen] = useState(false);
   const [isCompressingBanner, setIsCompressingBanner] = useState(false);
   const [editingPromoId, setEditingPromoId] = useState<string | null>(null);
-  const [promoForm, setPromoForm] = useState({
+  const [promoForm, setPromoForm] = useState<{
+    judul: string;
+    deskripsi: string;
+    imageUrl: string;
+    kategoriBanner: 'Promo' | 'Iklan';
+    linkKategori: string;
+    linkProductId: string;
+    linkProductName: string;
+    aktif: boolean;
+  }>({
     judul: '',
     deskripsi: '',
     imageUrl: '',
+    kategoriBanner: 'Promo',
     linkKategori: 'Semua',
     linkProductId: '',
     linkProductName: '',
     aktif: true
   });
+  const [filterBannerType, setFilterBannerType] = useState<'Semua' | 'Promo' | 'Iklan'>('Semua');
 
   // State for Target Special Product Search in Promo Banner
   const [searchTargetProductQuery, setSearchTargetProductQuery] = useState('');
@@ -325,9 +337,10 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
       // Update existing
       updatedList = updatedList.map(item => item.id === editingPromoId ? {
         ...item,
-        judul: promoForm.judul.trim() || 'Promo Spesial Toko',
+        judul: promoForm.judul.trim() || (promoForm.kategoriBanner === 'Iklan' ? 'Iklan Toko' : 'Promo Spesial Toko'),
         deskripsi: promoForm.deskripsi.trim(),
         imageUrl: promoForm.imageUrl,
+        kategoriBanner: promoForm.kategoriBanner || 'Promo',
         linkKategori: promoForm.linkKategori,
         linkProductId: promoForm.linkProductId,
         linkProductName: promoForm.linkProductName,
@@ -337,9 +350,10 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
       // Add new
       const newBanner: PromoBanner = {
         id: 'prm-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
-        judul: promoForm.judul.trim() || 'Promo Spesial Toko',
+        judul: promoForm.judul.trim() || (promoForm.kategoriBanner === 'Iklan' ? 'Iklan Toko' : 'Promo Spesial Toko'),
         deskripsi: promoForm.deskripsi.trim(),
         imageUrl: promoForm.imageUrl,
+        kategoriBanner: promoForm.kategoriBanner || 'Promo',
         linkKategori: promoForm.linkKategori,
         linkProductId: promoForm.linkProductId,
         linkProductName: promoForm.linkProductName,
@@ -361,6 +375,7 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
       judul: '',
       deskripsi: '',
       imageUrl: '',
+      kategoriBanner: 'Promo',
       linkKategori: 'Semua',
       linkProductId: '',
       linkProductName: '',
@@ -376,6 +391,7 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
       judul: b.judul || '',
       deskripsi: b.deskripsi || '',
       imageUrl: b.imageUrl || '',
+      kategoriBanner: b.kategoriBanner || 'Promo',
       linkKategori: b.linkKategori || 'Semua',
       linkProductId: b.linkProductId || '',
       linkProductName: b.linkProductName || '',
@@ -396,6 +412,43 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
       onUpdateConfig('promoBanners', updated);
       if (editingPromoId === promoId) resetPromoForm();
     }
+  };
+
+  const handleLoadDefaultBanners = () => {
+    if (!onUpdateConfig) return;
+    const starterBanners: PromoBanner[] = [
+      {
+        id: 'starter-ad-1',
+        judul: 'Belanja Mandiri Lebih Murah & Bebas Antre',
+        deskripsi: 'Pesan kebutuhan harian langsung dari HP dengan harga hemat dan diskon toko.',
+        imageUrl: webOrderBannerImg,
+        aktif: true,
+        kategoriBanner: 'Promo',
+        linkKategori: 'Semua',
+        tanggalDibuat: new Date().toLocaleDateString('id-ID')
+      },
+      {
+        id: 'starter-ad-2',
+        judul: 'Promo Spesial & Poin Belanja Member Setia',
+        deskripsi: 'Kumpulkan poin di setiap transaksi dan dapatkan potongan harga eksklusif khusus member.',
+        imageUrl: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=1200&auto=format&fit=crop&q=80',
+        aktif: true,
+        kategoriBanner: 'Promo',
+        linkKategori: 'Semua',
+        tanggalDibuat: new Date().toLocaleDateString('id-ID')
+      },
+      {
+        id: 'starter-ad-3',
+        judul: 'Pesan Antar Cepat Langsung ke Rumah Anda',
+        deskripsi: 'Belanja praktis tanpa repot keluar rumah, konfirmasi pesanan via WhatsApp kasir.',
+        imageUrl: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?w=1200&auto=format&fit=crop&q=80',
+        aktif: true,
+        kategoriBanner: 'Iklan',
+        linkKategori: 'Semua',
+        tanggalDibuat: new Date().toLocaleDateString('id-ID')
+      }
+    ];
+    onUpdateConfig('promoBanners', starterBanners);
   };
 
   const formatRp = (num: number) => `Rp ${num.toLocaleString('id-ID')}`;
@@ -585,10 +638,10 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
             type="button"
             onClick={() => setIsPromoBannerModalOpen(true)}
             className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shadow-3xs active:scale-95"
-            title="Unggah Foto Banner Promo untuk Tampilan Belanja Pembeli"
+            title="Pasang & Kelola Banner Iklan / Promo untuk Tampilan Belanja Pembeli"
           >
             <ImageIcon className="w-4 h-4" />
-            <span>Kelola Banner Promo</span>
+            <span>Pasang / Kelola Banner Iklan</span>
             {activePromoCount > 0 && (
               <span className="bg-slate-950 text-amber-300 text-[10px] font-black px-1.5 py-0.2 rounded-full ml-0.5">
                 {activePromoCount}
@@ -1427,13 +1480,13 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
                 </div>
                 <div>
                   <h3 className="text-base font-black text-slate-800 dark:text-zinc-100 flex items-center gap-2">
-                    <span>Kelola Banner Promo Toko Online</span>
+                    <span>Pasang / Kelola Banner Iklan Toko Online</span>
                     <span className="text-[10px] font-black bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300 px-2 py-0.5 rounded-full">
-                      {activePromoCount} Promo Aktif
+                      {activePromoCount} Banner Aktif
                     </span>
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-zinc-400">
-                    Unggah foto poster/banner promo yang nantinya langsung dapat dilihat oleh pelanggan di portal belanja online.
+                    Unggah atau pasang foto poster/banner iklan promosi toko yang ditampilkan berputar otomatis pada halaman belanja pembeli.
                   </p>
                 </div>
               </div>
@@ -1556,6 +1609,94 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
                       />
                     </label>
                   )}
+
+                  {/* ALTERNATIVE IMAGE SOURCES */}
+                  <div className="mt-2.5 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPromoForm(prev => ({ ...prev, imageUrl: webOrderBannerImg }))}
+                      className="px-3 py-2 bg-slate-200 dark:bg-zinc-700 hover:bg-slate-300 dark:hover:bg-zinc-600 text-slate-800 dark:text-zinc-100 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <ImageIcon className="w-3.5 h-3.5 text-amber-500" />
+                      <span>Gunakan Gambar Retail Toko</span>
+                    </button>
+
+                    <div className="flex-1 relative">
+                      <Link2 className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="url"
+                        placeholder="Atau tempel tautan URL gambar (https://...)"
+                        value={promoForm.imageUrl.startsWith('data:') ? '' : promoForm.imageUrl}
+                        onChange={(e) => setPromoForm(prev => ({ ...prev, imageUrl: e.target.value }))}
+                        className="w-full pl-8 pr-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-mono text-slate-800 dark:text-zinc-100 placeholder:text-slate-400"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* PILIHAN 2 KATEGORI BANNER: PROMO & IKLAN */}
+                <div className="bg-slate-50 dark:bg-zinc-800/70 p-3 rounded-2xl border border-slate-200 dark:border-zinc-700/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-black uppercase text-slate-800 dark:text-zinc-100 flex items-center gap-1.5">
+                      <span>Kategori Banner Toko</span>
+                      <span className="text-red-500">*</span>
+                    </label>
+                    <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full ${
+                      promoForm.kategoriBanner === 'Iklan'
+                        ? 'bg-blue-600 text-white shadow-3xs'
+                        : 'bg-rose-600 text-white shadow-3xs'
+                    }`}>
+                      {promoForm.kategoriBanner === 'Iklan' ? '📢 Kategori Iklan' : '🏷️ Kategori Promo'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPromoForm({ ...promoForm, kategoriBanner: 'Promo' })}
+                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col gap-1 ${
+                        promoForm.kategoriBanner !== 'Iklan'
+                          ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-400 dark:border-rose-600 text-rose-950 dark:text-rose-100 shadow-xs ring-2 ring-rose-500/20'
+                          : 'bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-700 text-slate-600 dark:text-zinc-400 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-black text-xs flex items-center gap-1.5 text-rose-600 dark:text-rose-400">
+                          <Tag className="w-3.5 h-3.5" />
+                          <span>1. Promo Toko</span>
+                        </span>
+                        {promoForm.kategoriBanner !== 'Iklan' && (
+                          <span className="text-[10px] font-black bg-rose-600 text-white px-2 py-0.2 rounded-full">✓ Dipilih</span>
+                        )}
+                      </div>
+                      <p className="text-[11px] leading-tight text-slate-600 dark:text-zinc-300">
+                        Memiliki tombol <strong>Lihat Produk</strong> dan <strong>Langsung Checkout / Beli Sekarang</strong>.
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setPromoForm({ ...promoForm, kategoriBanner: 'Iklan' })}
+                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col gap-1 ${
+                        promoForm.kategoriBanner === 'Iklan'
+                          ? 'bg-blue-50 dark:bg-blue-950/40 border-blue-400 dark:border-blue-600 text-blue-950 dark:text-blue-100 shadow-xs ring-2 ring-blue-500/20'
+                          : 'bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-700 text-slate-600 dark:text-zinc-400 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-black text-xs flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
+                          <Megaphone className="w-3.5 h-3.5" />
+                          <span>2. Iklan Toko</span>
+                        </span>
+                        {promoForm.kategoriBanner === 'Iklan' && (
+                          <span className="text-[10px] font-black bg-blue-600 text-white px-2 py-0.2 rounded-full">✓ Dipilih</span>
+                        )}
+                      </div>
+                      <p className="text-[11px] leading-tight text-slate-600 dark:text-zinc-300">
+                        <strong>Tombol langsung checkout ditiadakan.</strong> Hanya fungsi <strong>Lihat Produk Lengkap</strong>.
+                      </p>
+                    </button>
+                  </div>
                 </div>
 
                 {/* FORM INPUTS */}
@@ -1765,38 +1906,105 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
 
               {/* LIST OF CURRENT PROMO BANNERS */}
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-black uppercase text-slate-700 dark:text-zinc-300 tracking-wider">
-                    Daftar Banner Promo Toko ({promoBannersList.length})
-                  </h4>
-                  {!hideCustomerPortal && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsPromoBannerModalOpen(false);
-                        onOpenCustomerPreview();
-                      }}
-                      className="text-xs font-extrabold text-red-600 dark:text-red-400 hover:underline flex items-center gap-1 cursor-pointer"
-                    >
-                      <span>Lihat Tampilan Pembeli</span>
-                      <ArrowUpRight className="w-3.5 h-3.5" />
-                    </button>
-                  )}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h4 className="text-xs font-black uppercase text-slate-700 dark:text-zinc-300 tracking-wider">
+                      Daftar Banner ({promoBannersList.length})
+                    </h4>
+                    {/* FILTER TAB CATEGORY */}
+                    <div className="flex items-center bg-slate-100 dark:bg-zinc-800 p-0.5 rounded-lg border border-slate-200 dark:border-zinc-700 text-[10px] font-black">
+                      <button
+                        type="button"
+                        onClick={() => setFilterBannerType('Semua')}
+                        className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                          filterBannerType === 'Semua' 
+                            ? 'bg-white dark:bg-zinc-700 text-slate-900 dark:text-white shadow-3xs' 
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        Semua ({promoBannersList.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFilterBannerType('Promo')}
+                        className={`px-2 py-0.5 rounded-md transition-all cursor-pointer flex items-center gap-1 ${
+                          filterBannerType === 'Promo' 
+                            ? 'bg-rose-600 text-white shadow-3xs' 
+                            : 'text-slate-500 hover:text-rose-600'
+                        }`}
+                      >
+                        🏷️ Promo ({promoBannersList.filter(b => b.kategoriBanner !== 'Iklan').length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFilterBannerType('Iklan')}
+                        className={`px-2 py-0.5 rounded-md transition-all cursor-pointer flex items-center gap-1 ${
+                          filterBannerType === 'Iklan' 
+                            ? 'bg-blue-600 text-white shadow-3xs' 
+                            : 'text-slate-500 hover:text-blue-600'
+                        }`}
+                      >
+                        📢 Iklan ({promoBannersList.filter(b => b.kategoriBanner === 'Iklan').length})
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {promoBannersList.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleLoadDefaultBanners}
+                        className="text-[11px] font-bold text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
+                        title="Tambahkan atau reset banner contoh bawaan"
+                      >
+                        + Muat Banner Contoh
+                      </button>
+                    )}
+                    {!hideCustomerPortal && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsPromoBannerModalOpen(false);
+                          onOpenCustomerPreview();
+                        }}
+                        className="text-xs font-extrabold text-red-600 dark:text-red-400 hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>Lihat Tampilan Pembeli</span>
+                        <ArrowUpRight className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {promoBannersList.length === 0 ? (
-                  <div className="text-center py-8 bg-slate-50 dark:bg-zinc-800/40 rounded-2xl border border-dashed border-slate-200 dark:border-zinc-700 p-4">
-                    <ImageIcon className="w-8 h-8 text-slate-300 dark:text-zinc-600 mx-auto mb-2" />
-                    <p className="text-xs font-bold text-slate-600 dark:text-zinc-400">
-                      Belum ada banner promo yang diunggah.
-                    </p>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      Silakan unggah foto banner promo pertama toko Anda menggunakan formulir di atas.
-                    </p>
+                  <div className="text-center py-8 bg-slate-50 dark:bg-zinc-800/40 rounded-2xl border border-dashed border-slate-200 dark:border-zinc-700 p-4 space-y-3">
+                    <ImageIcon className="w-8 h-8 text-slate-300 dark:text-zinc-600 mx-auto mb-1" />
+                    <div>
+                      <p className="text-xs font-bold text-slate-600 dark:text-zinc-400">
+                        Belum ada banner iklan atau promo yang dipasang.
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Pasang banner iklan pertama Anda menggunakan formulir di atas, atau klik tombol di bawah untuk memuat 3 contoh banner toko siap pakai.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleLoadDefaultBanners}
+                      className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-xs font-black shadow-xs cursor-pointer inline-flex items-center gap-1.5 transition-all active:scale-95"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      <span>Muat Contoh Banner Toko (3 Banner Siap Pakai)</span>
+                    </button>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {promoBannersList.map((b) => (
+                    {promoBannersList
+                      .filter(b => {
+                        if (filterBannerType === 'Promo') return b.kategoriBanner !== 'Iklan';
+                        if (filterBannerType === 'Iklan') return b.kategoriBanner === 'Iklan';
+                        return true;
+                      })
+                      .map((b) => (
                       <div
                         key={b.id}
                         className={`rounded-2xl border p-3 space-y-2 relative transition-all ${
@@ -1811,13 +2019,20 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
                             alt={b.judul}
                             className="w-full h-full object-cover"
                           />
-                          <div className="absolute top-2 left-2 flex items-center gap-1">
+                          <div className="absolute top-2 left-2 flex items-center gap-1 flex-wrap">
                             <span className={`text-[9.5px] font-black px-2 py-0.5 rounded-full ${
                               b.aktif 
                                 ? 'bg-emerald-600 text-white shadow-xs' 
                                 : 'bg-slate-700 text-slate-300'
                             }`}>
                               {b.aktif ? '● Aktif' : 'Non-aktif'}
+                            </span>
+                            <span className={`text-[9.5px] font-black px-2 py-0.5 rounded-full text-white shadow-xs ${
+                              b.kategoriBanner === 'Iklan'
+                                ? 'bg-blue-600'
+                                : 'bg-rose-600'
+                            }`}>
+                              {b.kategoriBanner === 'Iklan' ? '📢 Iklan' : '🏷️ Promo'}
                             </span>
                             {b.linkKategori && b.linkKategori !== 'Semua' && (
                               <span className="text-[9.5px] font-black bg-amber-500 text-slate-950 px-2 py-0.5 rounded-full shadow-xs flex items-center gap-1">

@@ -85,6 +85,7 @@ export interface PromoBanner {
   imageUrl: string; // Base64 data URL or photo URL
   deskripsi?: string;
   aktif: boolean;
+  kategoriBanner?: 'Promo' | 'Iklan'; // Category: 'Promo' (default, has checkout/buy now) or 'Iklan' (only view product)
   linkKategori?: string; // Optional category filter link e.g. "Sembako", "Minuman", "Semua"
   linkProductId?: string; // Optional specific product ID to directly target/view product
   linkProductName?: string; // Optional specific product name for display
@@ -148,6 +149,9 @@ export interface PesananOnline {
   alasanBatal?: string;
   memberId?: string; // ID Member pembeli jika bertransaksi via akun member
   idMember?: string; // Display ID member (e.g. SRC-MEM-...)
+  syncStatus?: 'synced' | 'pending' | 'failed'; // Status sinkronisasi ke Firebase Cloud Firestore
+  lastSyncError?: string; // Pesan kegagalan sinkronisasi cloud
+  syncedAt?: string; // Waktu pesanan berhasil terkirim ke Firestore
 }
 
 export interface ShiftLog {

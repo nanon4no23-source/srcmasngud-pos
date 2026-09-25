@@ -1,0 +1,102 @@
+name: Build APK Portal Pembeli (SRC MASNGUD)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Kode Repositori
+        uses: actions/checkout@v4
+
+      - name: 📦 Ekstrak Berkas ZIP (Jika Ada di Repositori)
+        run: |
+          echo "=== MEMERIKSA BERKAS DI REPOSITORI ==="
+          ls -la
+          for z in $(find . -maxdepth 3 -name "*.zip" -not -path "*/node_modules/*"); do
+            if [ -f "$z" ]; then
+              echo "Mengekstrak berkas $z..."
+              unzip -q -o "$z" || true
+            fi
+          done
+          echo "=== STRUKTUR SETELAH EKSTRAKSI ==="
+          ls -la
+
+      - name: 🔍 Cari Direktori Proyek Android
+        id: locate-project
+        run: |
+          # Cari lokasi gradlew di repositori
+          GRADLEW_FILE=$(find . -maxdepth 4 -name "gradlew" -not -path "*/node_modules/*" | head -n 1)
+          if [ -n "$GRADLEW_FILE" ]; then
+            TARGET_DIR=$(dirname "$GRADLEW_FILE")
+            echo "workdir=$TARGET_DIR" >> $GITHUB_OUTPUT
+            echo "Proyek Android ditemukan di direktori: $TARGET_DIR"
+          else
+            echo "workdir=." >> $GITHUB_OUTPUT
+            echo "Menggunakan direktori root (.)"
+          fi
+
+      - name: ☕ Setup Java JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: 🤖 Setup Android SDK (API 35 & 34)
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-35 platforms;android-34 build-tools;35.0.0 build-tools;34.0.0'
+
+      - name: 📜 Setujui Lisensi Android SDK
+        run: |
+          yes | sdkmanager --licenses || true
+
+      - name: ⚙️ Optimasi Konfigurasi Gradle
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8" >> ~/.gradle/gradle.properties
+          echo "android.useAndroidX=true" >> ~/.gradle/gradle.properties
+          echo "android.builder.sdkDownload=true" >> ~/.gradle/gradle.properties
+
+      - name: 🔧 Auto-Patch Kompatibilitas Kode (Aman & Fleksibel)
+        working-directory: ${{ steps.locate-project.outputs.workdir }}
+        run: |
+          echo "=== PENYESUAIAN VERSI GRADLE KE JAVA 21 & SDK 35 ==="
+          find . -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i 's/JavaVersion\.VERSION_1_8/JavaVersion.VERSION_21/g' {} + || true
+          find . -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i 's/JavaVersion\.VERSION_17/JavaVersion.VERSION_21/g' {} + || true
+          find . -type f -name "variables.gradle" -exec sed -i 's/compileSdkVersion = [0-9]\+/compileSdkVersion = 35/g' {} + || true
+          find . -type f -name "variables.gradle" -exec sed -i 's/targetSdkVersion = [0-9]\+/targetSdkVersion = 35/g' {} + || true
+
+      - name: 🔑 Berikan Izin Eksekusi Gradle Wrapper
+        working-directory: ${{ steps.locate-project.outputs.workdir }}
+        run: |
+          chmod +x ./gradlew || true
+
+      - name: 🔨 Compile & Build APK Android
+        working-directory: ${{ steps.locate-project.outputs.workdir }}
+        run: |
+          ./gradlew assembleDebug --no-daemon --console=plain
+
+      - name: 📂 Kumpulkan & Gandakan File APK
+        run: |
+          mkdir -p output-apk
+          find . -name "*.apk" -not -path "*/output-apk/*" -exec cp {} output-apk/ \; || true
+          echo "=== BERKAS APK HASIL BUILD ==="
+          ls -lh output-apk/
+
+      - name: 🚀 Unggah File APK ke Artifacts GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: srcmasngud-portal-pembeli-apk
+          path: output-apk/*
+          retention-days: 30

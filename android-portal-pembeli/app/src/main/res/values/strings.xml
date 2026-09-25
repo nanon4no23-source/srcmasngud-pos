@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SRC MASNGUD</string>
+    <string name="portal_url">https://ais-pre-ygntom22qz77b7nows5adl-464365808003.asia-southeast1.run.app/?mode=pembeli</string>
+    <string name="offline_title">Koneksi Terputus</string>
+    <string name="offline_msg">Pastikan koneksi internet atau data seluler Anda aktif untuk mengakses Belanja Online SRC MASNGUD.</string>
+    <string name="btn_retry">Coba Lagi</string>
+</resources>

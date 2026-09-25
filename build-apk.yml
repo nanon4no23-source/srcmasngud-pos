@@ -78,12 +78,14 @@ jobs:
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
           echo "=== MENYELARASKAN FILE GRADLE KE JAVA 21 & SDK 35 ==="
-          find android/ -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i 's/JavaVersion\.VERSION_1_8/JavaVersion.VERSION_21/g' {} +
-          find android/ -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i 's/JavaVersion\.VERSION_17/JavaVersion.VERSION_21/g' {} +
-          find android/ -type f -name "variables.gradle" -exec sed -i 's/compileSdkVersion = [0-9]\+/compileSdkVersion = 35/g' {} +
-          find android/ -type f -name "variables.gradle" -exec sed -i 's/targetSdkVersion = [0-9]\+/targetSdkVersion = 35/g' {} +
-          find android/ -type f -name "*.java" -not -path "*/build/*" -exec sed -i 's/Build\.VERSION_CODES\.VANILLA_ICE_CREAM/35/g' {} +
-          find android/ -type f -name "MainActivity.java" -exec sed -i 's/MainActivity\.super\.onBackPressed();/finish();/g' {} +
+          if [ -d "android" ]; then
+            find android/ -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i 's/JavaVersion\.VERSION_1_8/JavaVersion.VERSION_21/g' {} + || true
+            find android/ -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i 's/JavaVersion\.VERSION_17/JavaVersion.VERSION_21/g' {} + || true
+            find android/ -type f -name "variables.gradle" -exec sed -i 's/compileSdkVersion = [0-9]\+/compileSdkVersion = 35/g' {} + || true
+            find android/ -type f -name "variables.gradle" -exec sed -i 's/targetSdkVersion = [0-9]\+/targetSdkVersion = 35/g' {} + || true
+            find android/ -type f -name "*.java" -not -path "*/build/*" -exec sed -i 's/Build\.VERSION_CODES\.VANILLA_ICE_CREAM/35/g' {} + || true
+            find android/ -type f -name "MainActivity.java" -exec sed -i 's/MainActivity\.super\.onBackPressed();/finish();/g' {} + || true
+          fi
           
           # Hapus duplikasi kotlin-stdlib
           python3 -c '
@@ -98,8 +100,8 @@ jobs:
                   print("Patched duplicate kotlin exclusion in:", f)
           '
 
-          if [ ! -f "android/app/google-services.json" ]; then
-            find android/app/ -name "build.gradle" -exec sed -i '/apply plugin:.*google-services.*/d' {} +
+          if [ -d "android/app" ] && [ ! -f "android/app/google-services.json" ]; then
+            find android/app/ -name "build.gradle" -exec sed -i '/apply plugin:.*google-services.*/d' {} + || true
           fi
 
       - name: 📦 Install Node Dependencies

@@ -6,7 +6,7 @@ import {
   MessageCircle, Printer, Share2, AlertCircle, Eye, ChevronRight,
   Filter, Search, QrCode, Copy, Check, Edit3, Trash2, Plus, Minus, X, PackageX,
   Image as ImageIcon, Upload, Sparkles, Power, Tag, ArrowUpRight, Link2, Globe, ExternalLink,
-  RefreshCw, FileText, Megaphone
+  RefreshCw, FileText, Megaphone, Download
 } from 'lucide-react';
 import webOrderBannerImg from '../assets/web_order_banner.jpg';
 
@@ -1611,26 +1611,68 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
                   )}
 
                   {/* ALTERNATIVE IMAGE SOURCES */}
-                  <div className="mt-2.5 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setPromoForm(prev => ({ ...prev, imageUrl: webOrderBannerImg }))}
-                      className="px-3 py-2 bg-slate-200 dark:bg-zinc-700 hover:bg-slate-300 dark:hover:bg-zinc-600 text-slate-800 dark:text-zinc-100 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5"
-                    >
-                      <ImageIcon className="w-3.5 h-3.5 text-amber-500" />
-                      <span>Gunakan Gambar Retail Toko</span>
-                    </button>
+                  <div className="mt-2.5 space-y-1.5">
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPromoForm(prev => ({ ...prev, imageUrl: webOrderBannerImg }))}
+                        className="px-3 py-2 bg-slate-200 dark:bg-zinc-700 hover:bg-slate-300 dark:hover:bg-zinc-600 text-slate-800 dark:text-zinc-100 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+                      >
+                        <ImageIcon className="w-3.5 h-3.5 text-amber-500" />
+                        <span>Gunakan Gambar Retail Toko</span>
+                      </button>
 
-                    <div className="flex-1 relative">
-                      <Link2 className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                      <input
-                        type="url"
-                        placeholder="Atau tempel tautan URL gambar (https://...)"
-                        value={promoForm.imageUrl.startsWith('data:') ? '' : promoForm.imageUrl}
-                        onChange={(e) => setPromoForm(prev => ({ ...prev, imageUrl: e.target.value }))}
-                        className="w-full pl-8 pr-3 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-mono text-slate-800 dark:text-zinc-100 placeholder:text-slate-400"
-                      />
+                      <div className="flex-1 flex items-center gap-1.5">
+                        <div className="flex-1 relative">
+                          <Link2 className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <input
+                            type="url"
+                            placeholder="Atau tempel tautan URL gambar (https://...)"
+                            value={promoForm.imageUrl.startsWith('data:') ? '' : promoForm.imageUrl}
+                            onChange={(e) => setPromoForm(prev => ({ ...prev, imageUrl: e.target.value }))}
+                            className="w-full pl-8 pr-8 py-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl text-xs font-mono text-slate-800 dark:text-zinc-100 placeholder:text-slate-400"
+                          />
+                          {promoForm.imageUrl && !promoForm.imageUrl.startsWith('data:') && (
+                            <button
+                              type="button"
+                              onClick={() => setPromoForm(prev => ({ ...prev, imageUrl: '' }))}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-rose-500 rounded-md cursor-pointer"
+                              title="Hapus URL"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const text = await navigator.clipboard.readText();
+                              if (text && text.trim()) {
+                                setPromoForm(prev => ({ ...prev, imageUrl: text.trim() }));
+                              } else {
+                                alert('Papan klip (clipboard) HP Anda kosong. Silakan salin link URL gambar terlebih dahulu.');
+                              }
+                            } catch (err) {
+                              const manualUrl = prompt('Tempel tautan URL gambar poster di sini (https://...):');
+                              if (manualUrl && manualUrl.trim()) {
+                                setPromoForm(prev => ({ ...prev, imageUrl: manualUrl.trim() }));
+                              }
+                            }
+                          }}
+                          className="px-3 py-2 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 shrink-0 shadow-3xs cursor-pointer"
+                          title="Klik untuk langsung menempel link gambar dari clipboard HP Anda"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Tempel</span>
+                        </button>
+                      </div>
                     </div>
+
+                    <p className="text-[11px] text-slate-500 dark:text-zinc-400 flex items-center gap-1 px-1">
+                      <span>💡 <strong>Tips:</strong> Klik tombol <strong>"Tempel"</strong>, atau <strong>tekan &amp; tahan jari</strong> di kolom URL lalu pilih menu <strong>Tempel / Paste</strong>.</span>
+                    </p>
                   </div>
                 </div>
 
@@ -2332,6 +2374,36 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
                 <p className="text-[10px] text-slate-400">
                   Kosongkan jika ingin menggunakan link publik bawaan Cloud Run.
                 </p>
+              </div>
+
+              {/* DOWNLOAD APK & ZIP PROJECT FOR PORTAL PEMBELI */}
+              <div className="p-4 bg-gradient-to-br from-red-50 to-rose-50 dark:from-red-950/30 dark:to-rose-950/20 border border-red-200 dark:border-red-900/40 rounded-2xl space-y-2.5">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-red-600 text-white rounded-xl shrink-0 shadow-2xs">
+                    <Download className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-slate-800 dark:text-zinc-100">
+                      File ZIP Proyek APK Portal Pembeli
+                    </h4>
+                    <p className="text-[10px] text-slate-500 dark:text-zinc-400">
+                      Siap build via GitHub Actions (Workflow YML sudah tersedia)
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-slate-600 dark:text-zinc-300 leading-relaxed">
+                  Paket proyek Android mandiri (Gradle + Manifest + WebView Camera Scanner + file workflow <code>.github/workflows/build-apk-portal-pembeli.yml</code>). Aman tanpa mengganggu aplikasi kasir.
+                </p>
+
+                <a
+                  href="/src-masngud-portal-pembeli-apk-project.zip"
+                  download="src-masngud-portal-pembeli-apk-project.zip"
+                  className="w-full py-2.5 bg-red-600 hover:bg-red-700 active:scale-98 text-white font-black text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 shadow-xs"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Unduh File ZIP Proyek APK (2.3 MB)</span>
+                </a>
               </div>
 
             </div>

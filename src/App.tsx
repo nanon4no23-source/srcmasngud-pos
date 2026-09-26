@@ -4561,12 +4561,8 @@ export default function App() {
       }
     };
 
-    // 3. Prevent Pull-To-Refresh gesture on mobile touch devices when in Kasir tab
-    if (isKasirActive) {
-      document.body.style.overscrollBehaviorY = 'contain';
-    } else {
-      document.body.style.overscrollBehaviorY = '';
-    }
+    // 3. Prevent Pull-To-Refresh gesture on mobile touch devices (both in Kasir & Portal Pembeli)
+    document.body.style.overscrollBehaviorY = 'contain';
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     window.addEventListener('keydown', handlePreventReloadKeys, true);
@@ -4574,7 +4570,6 @@ export default function App() {
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
       window.removeEventListener('keydown', handlePreventReloadKeys, true);
-      document.body.style.overscrollBehaviorY = '';
     };
   }, [activeTab, keranjang]);
 

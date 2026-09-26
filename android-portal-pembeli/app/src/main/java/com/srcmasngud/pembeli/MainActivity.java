@@ -255,18 +255,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setupSwipeRefresh() {
+        // Nonaktifkan SwipeRefresh agar pengguna leluasa scrolling katalog dan form pembayaran tanpa reload tidak sengaja
+        swipeRefresh.setEnabled(false);
         swipeRefresh.setColorSchemeResources(R.color.primary_red);
-        swipeRefresh.setOnRefreshListener(() -> {
-            if (isNetworkAvailable()) {
-                layoutOffline.setVisibility(View.GONE);
-                webView.setVisibility(View.VISIBLE);
-                webView.reload();
-            } else {
-                swipeRefresh.setRefreshing(false);
-                layoutOffline.setVisibility(View.VISIBLE);
-                webView.setVisibility(View.GONE);
-            }
-        });
     }
 
     private void checkCameraPermission() {

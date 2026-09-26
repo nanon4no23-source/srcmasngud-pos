@@ -35,13 +35,11 @@ jobs:
       - name: 🔍 Cari Direktori Proyek Android Portal Pembeli
         id: locate-portal
         run: |
-          # Prioritaskan folder android-portal-pembeli jika ada
           PORTAL_DIR=$(find . -maxdepth 4 -type d -name "android-portal-pembeli" | head -n 1)
           if [ -n "$PORTAL_DIR" ] && [ -f "$PORTAL_DIR/gradlew" ]; then
             echo "portaldir=$PORTAL_DIR" >> $GITHUB_OUTPUT
             echo "Folder Portal Pembeli ditemukan di: $PORTAL_DIR"
           else
-            # Jika diekstrak langsung ke root atau nama lain
             GRADLEW_FILE=$(find . -maxdepth 4 -name "gradlew" -not -path "*/android/*" -not -path "*/node_modules/*" | head -n 1)
             if [ -n "$GRADLEW_FILE" ]; then
               TARGET_DIR=$(dirname "$GRADLEW_FILE")
@@ -79,18 +77,10 @@ jobs:
         working-directory: ${{ steps.locate-portal.outputs.portaldir }}
         run: |
           echo "=== BERSIHKAN DUPLIKASI RESOURCE COLOR IC_LAUNCHER ==="
-          # Hapus ic_launcher_background dari colors.xml agar tidak bentrok dengan ic_launcher_background.xml
           find . -name "colors.xml" -not -path "*/build/*" -exec sed -i '/ic_launcher_background/d' {} + || true
-
-          # Pastikan file ic_launcher_background.xml ada di folder values app
           find . -type d -name "values" -not -path "*/build/*" | while read -r vdir; do
             if [ ! -f "$vdir/ic_launcher_background.xml" ]; then
-              cat << 'EOF' > "$vdir/ic_launcher_background.xml"
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <color name="ic_launcher_background">#FFFFFF</color>
-</resources>
-EOF
+              echo '<?xml version="1.0" encoding="utf-8"?><resources><color name="ic_launcher_background">#FFFFFF</color></resources>' > "$vdir/ic_launcher_background.xml"
             fi
           done
 

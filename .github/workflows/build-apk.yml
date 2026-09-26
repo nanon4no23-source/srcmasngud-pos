@@ -99,29 +99,18 @@ jobs:
           find . -path "*/capacitor-android/*" -name "ic_launcher_background.xml" -delete 2>/dev/null || true
           find . -path "*/capacitor-cordova-android-plugins/*" -name "ic_launcher_background.xml" -delete 2>/dev/null || true
 
-          # Pastikan file ic_launcher_background.xml ada di app values
           if [ -d "android/app/src/main/res/values" ] && [ ! -f "android/app/src/main/res/values/ic_launcher_background.xml" ]; then
-            cat << 'EOF' > android/app/src/main/res/values/ic_launcher_background.xml
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <color name="ic_launcher_background">#FFFFFF</color>
-</resources>
-EOF
+            echo '<?xml version="1.0" encoding="utf-8"?><resources><color name="ic_launcher_background">#FFFFFF</color></resources>' > android/app/src/main/res/values/ic_launcher_background.xml
           fi
 
           echo "=== PENYESUAIAN AGP DAN CAPACITOR-ANDROID ==="
-          # Arahkan capacitor-android ke submodule lokal agar bebas bentrok versi
           if [ -d "android/capacitor-android" ]; then
-            cat << 'EOF' > android/capacitor.settings.gradle
-include ':capacitor-android'
-project(':capacitor-android').projectDir = new File('./capacitor-android')
-EOF
+            echo "include ':capacitor-android'" > android/capacitor.settings.gradle
+            echo "project(':capacitor-android').projectDir = new File('./capacitor-android')" >> android/capacitor.settings.gradle
           fi
 
-          # Samakan semua versi Android Gradle Plugin ke 8.7.3
           find . -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i "s/classpath ['\"]com\.android\.tools\.build:gradle:[^'\"]*['\"]/classpath 'com.android.tools.build:gradle:8.7.3'/g" {} + || true
 
-          # Sesuaikan Java 21 dan compileSdk 35
           if [ -d "android" ]; then
             find android/ -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i 's/JavaVersion\.VERSION_1_8/JavaVersion.VERSION_21/g' {} + || true
             find android/ -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i 's/JavaVersion\.VERSION_17/JavaVersion.VERSION_21/g' {} + || true
@@ -131,7 +120,6 @@ EOF
             find android/ -type f -name "MainActivity.java" -exec sed -i 's/MainActivity\.super\.onBackPressed();/finish();/g' {} + || true
           fi
 
-          # Hapus duplikasi kotlin-stdlib
           python3 -c '
           import glob
           for f in glob.glob("android/**/build.gradle", recursive=True):
@@ -236,15 +224,9 @@ EOF
         run: |
           echo "=== BERSIHKAN DUPLIKASI RESOURCE IC_LAUNCHER ==="
           find . -name "colors.xml" -not -path "*/build/*" -exec sed -i '/ic_launcher_background/d' {} + || true
-
           find . -type d -name "values" -not -path "*/build/*" | while read -r vdir; do
             if [ ! -f "$vdir/ic_launcher_background.xml" ]; then
-              cat << 'EOF' > "$vdir/ic_launcher_background.xml"
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <color name="ic_launcher_background">#FFFFFF</color>
-</resources>
-EOF
+              echo '<?xml version="1.0" encoding="utf-8"?><resources><color name="ic_launcher_background">#FFFFFF</color></resources>' > "$vdir/ic_launcher_background.xml"
             fi
           done
 

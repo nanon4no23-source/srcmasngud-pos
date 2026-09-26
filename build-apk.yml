@@ -94,6 +94,21 @@ jobs:
       - name: 🔧 Auto-Patch Kompatibilitas AGP 8.7.3 & Java 21
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
+          echo "=== BERSIHKAN DUPLIKASI RESOURCE IC_LAUNCHER DI MODUL LIBRARY ==="
+          find . -name "colors.xml" -not -path "*/build/*" -exec sed -i '/ic_launcher_background/d' {} + || true
+          find . -path "*/capacitor-android/*" -name "ic_launcher_background.xml" -delete 2>/dev/null || true
+          find . -path "*/capacitor-cordova-android-plugins/*" -name "ic_launcher_background.xml" -delete 2>/dev/null || true
+
+          # Pastikan file ic_launcher_background.xml ada di app values
+          if [ -d "android/app/src/main/res/values" ] && [ ! -f "android/app/src/main/res/values/ic_launcher_background.xml" ]; then
+            cat << 'EOF' > android/app/src/main/res/values/ic_launcher_background.xml
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#FFFFFF</color>
+</resources>
+EOF
+          fi
+
           echo "=== PENYESUAIAN AGP DAN CAPACITOR-ANDROID ==="
           # Arahkan capacitor-android ke submodule lokal agar bebas bentrok versi
           if [ -d "android/capacitor-android" ]; then
@@ -216,16 +231,20 @@ EOF
           echo "android.useAndroidX=true" >> ~/.gradle/gradle.properties
           echo "android.builder.sdkDownload=true" >> ~/.gradle/gradle.properties
 
-      - name: 🔧 Auto-Patch Resource Warna & AGP Portal Pembeli
+      - name: 🔧 Auto-Patch Resource Bebas Duplikasi & AGP Portal Pembeli
         working-directory: ${{ steps.locate-portal.outputs.portaldir }}
         run: |
-          echo "=== MEMASTIKAN RESOURCE IC_LAUNCHER TERSEDIA ==="
+          echo "=== BERSIHKAN DUPLIKASI RESOURCE IC_LAUNCHER ==="
+          find . -name "colors.xml" -not -path "*/build/*" -exec sed -i '/ic_launcher_background/d' {} + || true
+
           find . -type d -name "values" -not -path "*/build/*" | while read -r vdir; do
             if [ ! -f "$vdir/ic_launcher_background.xml" ]; then
-              echo '<?xml version="1.0" encoding="utf-8"?><resources><color name="ic_launcher_background">#FFFFFF</color></resources>' > "$vdir/ic_launcher_background.xml"
-            fi
-            if [ -f "$vdir/colors.xml" ] && ! grep -q "ic_launcher_background" "$vdir/colors.xml"; then
-              sed -i 's/<\/resources>/    <color name="ic_launcher_background">#FFFFFF<\/color>\n<\/resources>/' "$vdir/colors.xml" || true
+              cat << 'EOF' > "$vdir/ic_launcher_background.xml"
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#FFFFFF</color>
+</resources>
+EOF
             fi
           done
 

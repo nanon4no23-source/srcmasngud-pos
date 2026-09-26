@@ -11,8 +11,8 @@ permissions:
   contents: write
 
 jobs:
-  build-apk:
-    name: Build Android APK
+  build-portal-pembeli:
+    name: Build APK Portal Pembeli (Yuk Belanja)
     runs-on: ubuntu-latest
 
     steps:
@@ -32,17 +32,25 @@ jobs:
           echo "=== STRUKTUR SETELAH EKSTRAKSI ==="
           ls -la
 
-      - name: 🔍 Cari Direktori Proyek Android
-        id: locate-project
+      - name: 🔍 Cari Direktori Proyek Android Portal Pembeli
+        id: locate-portal
         run: |
-          GRADLEW_FILE=$(find . -maxdepth 4 -name "gradlew" -not -path "*/node_modules/*" | head -n 1)
-          if [ -n "$GRADLEW_FILE" ]; then
-            TARGET_DIR=$(dirname "$GRADLEW_FILE")
-            echo "workdir=$TARGET_DIR" >> $GITHUB_OUTPUT
-            echo "Proyek Android ditemukan di direktori: $TARGET_DIR"
+          # Prioritaskan folder android-portal-pembeli jika ada
+          PORTAL_DIR=$(find . -maxdepth 4 -type d -name "android-portal-pembeli" | head -n 1)
+          if [ -n "$PORTAL_DIR" ] && [ -f "$PORTAL_DIR/gradlew" ]; then
+            echo "portaldir=$PORTAL_DIR" >> $GITHUB_OUTPUT
+            echo "Folder Portal Pembeli ditemukan di: $PORTAL_DIR"
           else
-            echo "workdir=." >> $GITHUB_OUTPUT
-            echo "Menggunakan direktori root (.)"
+            # Jika diekstrak langsung ke root atau nama lain
+            GRADLEW_FILE=$(find . -maxdepth 4 -name "gradlew" -not -path "*/android/*" -not -path "*/node_modules/*" | head -n 1)
+            if [ -n "$GRADLEW_FILE" ]; then
+              TARGET_DIR=$(dirname "$GRADLEW_FILE")
+              echo "portaldir=$TARGET_DIR" >> $GITHUB_OUTPUT
+              echo "Proyek Android ditemukan di direktori: $TARGET_DIR"
+            else
+              echo "portaldir=." >> $GITHUB_OUTPUT
+              echo "Menggunakan direktori root (.)"
+            fi
           fi
 
       - name: ☕ Setup Java JDK 21 (Temurin)
@@ -67,45 +75,53 @@ jobs:
           echo "android.useAndroidX=true" >> ~/.gradle/gradle.properties
           echo "android.builder.sdkDownload=true" >> ~/.gradle/gradle.properties
 
-      - name: 🔧 Auto-Patch Kompatibilitas Kode & Resource Warna
-        working-directory: ${{ steps.locate-project.outputs.workdir }}
+      - name: 🔧 Auto-Patch Resource Bebas Duplikasi & Kompatibilitas SDK
+        working-directory: ${{ steps.locate-portal.outputs.portaldir }}
         run: |
+          echo "=== BERSIHKAN DUPLIKASI RESOURCE COLOR IC_LAUNCHER ==="
+          # Hapus ic_launcher_background dari colors.xml agar tidak bentrok dengan ic_launcher_background.xml
+          find . -name "colors.xml" -not -path "*/build/*" -exec sed -i '/ic_launcher_background/d' {} + || true
+
+          # Pastikan file ic_launcher_background.xml ada di folder values app
+          find . -type d -name "values" -not -path "*/build/*" | while read -r vdir; do
+            if [ ! -f "$vdir/ic_launcher_background.xml" ]; then
+              cat << 'EOF' > "$vdir/ic_launcher_background.xml"
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#FFFFFF</color>
+</resources>
+EOF
+            fi
+          done
+
           echo "=== PENYESUAIAN VERSI GRADLE KE JAVA 21 & SDK 35 ==="
           find . -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i 's/JavaVersion\.VERSION_1_8/JavaVersion.VERSION_21/g' {} + || true
           find . -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i 's/JavaVersion\.VERSION_17/JavaVersion.VERSION_21/g' {} + || true
           find . -type f -name "variables.gradle" -exec sed -i 's/compileSdkVersion = [0-9]\+/compileSdkVersion = 35/g' {} + || true
           find . -type f -name "variables.gradle" -exec sed -i 's/targetSdkVersion = [0-9]\+/targetSdkVersion = 35/g' {} + || true
 
-          echo "=== MEMASTIKAN RESOURCE COLOR IC_LAUNCHER TERSEDIA ==="
-          find . -type d -name "values" -not -path "*/build/*" | while read -r vdir; do
-            if [ ! -f "$vdir/ic_launcher_background.xml" ]; then
-              echo '<?xml version="1.0" encoding="utf-8"?><resources><color name="ic_launcher_background">#FFFFFF</color></resources>' > "$vdir/ic_launcher_background.xml"
-            fi
-            if [ -f "$vdir/colors.xml" ] && ! grep -q "ic_launcher_background" "$vdir/colors.xml"; then
-              sed -i 's/<\/resources>/    <color name="ic_launcher_background">#FFFFFF<\/color>\n<\/resources>/' "$vdir/colors.xml" || true
-            fi
-          done
-
       - name: 🔑 Berikan Izin Eksekusi Gradle Wrapper
-        working-directory: ${{ steps.locate-project.outputs.workdir }}
+        working-directory: ${{ steps.locate-portal.outputs.portaldir }}
         run: |
           chmod +x ./gradlew || true
 
-      - name: 🔨 Compile & Build APK Android
-        working-directory: ${{ steps.locate-project.outputs.workdir }}
+      - name: 🔨 Compile & Build APK Portal Pembeli
+        working-directory: ${{ steps.locate-portal.outputs.portaldir }}
         run: |
           ./gradlew assembleDebug --no-daemon --console=plain
 
-      - name: 📂 Kumpulkan & Gandakan File APK
+      - name: 📂 Kumpulkan & Gandakan File APK Portal Pembeli
+        working-directory: ${{ steps.locate-portal.outputs.portaldir }}
         run: |
           mkdir -p output-apk
+          find app/build/outputs/apk/ -name "*.apk" -exec cp {} output-apk/srcmasngud-portal-pembeli.apk \; || true
           find . -name "*.apk" -not -path "*/output-apk/*" -exec cp {} output-apk/ \; || true
-          echo "=== BERKAS APK HASIL BUILD ==="
+          echo "=== BERKAS APK PORTAL PEMBELI HASIL BUILD ==="
           ls -lh output-apk/
 
-      - name: 🚀 Unggah File APK ke Artifacts GitHub
+      - name: 🚀 Unggah File APK Portal Pembeli ke Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: srcmasngud-portal-pembeli-apk
-          path: output-apk/*
+          path: ${{ steps.locate-portal.outputs.portaldir }}/output-apk/*
           retention-days: 30

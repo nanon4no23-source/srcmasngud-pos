@@ -35,7 +35,6 @@ jobs:
       - name: 🔍 Cari Direktori Proyek Android
         id: locate-project
         run: |
-          # Cari lokasi gradlew di repositori
           GRADLEW_FILE=$(find . -maxdepth 4 -name "gradlew" -not -path "*/node_modules/*" | head -n 1)
           if [ -n "$GRADLEW_FILE" ]; then
             TARGET_DIR=$(dirname "$GRADLEW_FILE")
@@ -68,7 +67,7 @@ jobs:
           echo "android.useAndroidX=true" >> ~/.gradle/gradle.properties
           echo "android.builder.sdkDownload=true" >> ~/.gradle/gradle.properties
 
-      - name: 🔧 Auto-Patch Kompatibilitas Kode (Aman & Fleksibel)
+      - name: 🔧 Auto-Patch Kompatibilitas Kode & Resource Warna
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
           echo "=== PENYESUAIAN VERSI GRADLE KE JAVA 21 & SDK 35 ==="
@@ -76,6 +75,16 @@ jobs:
           find . -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i 's/JavaVersion\.VERSION_17/JavaVersion.VERSION_21/g' {} + || true
           find . -type f -name "variables.gradle" -exec sed -i 's/compileSdkVersion = [0-9]\+/compileSdkVersion = 35/g' {} + || true
           find . -type f -name "variables.gradle" -exec sed -i 's/targetSdkVersion = [0-9]\+/targetSdkVersion = 35/g' {} + || true
+
+          echo "=== MEMASTIKAN RESOURCE COLOR IC_LAUNCHER TERSEDIA ==="
+          find . -type d -name "values" -not -path "*/build/*" | while read -r vdir; do
+            if [ ! -f "$vdir/ic_launcher_background.xml" ]; then
+              echo '<?xml version="1.0" encoding="utf-8"?><resources><color name="ic_launcher_background">#FFFFFF</color></resources>' > "$vdir/ic_launcher_background.xml"
+            fi
+            if [ -f "$vdir/colors.xml" ] && ! grep -q "ic_launcher_background" "$vdir/colors.xml"; then
+              sed -i 's/<\/resources>/    <color name="ic_launcher_background">#FFFFFF<\/color>\n<\/resources>/' "$vdir/colors.xml" || true
+            fi
+          done
 
       - name: 🔑 Berikan Izin Eksekusi Gradle Wrapper
         working-directory: ${{ steps.locate-project.outputs.workdir }}

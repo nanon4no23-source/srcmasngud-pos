@@ -570,55 +570,59 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
   return (
     <div className="space-y-6">
       
-      {/* TOP BANNER & ACTION HEADER */}
-      <div className={`p-4 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm ${
+      {/* TOP BANNER & ACTION HEADER (RESPONSIF LANDSCAPE & PORTRAIT) */}
+      <div className={`p-4 rounded-2xl border flex flex-col gap-3.5 shadow-sm ${
         hologramMode ? 'bg-[#121212] border-zinc-800 text-white' : 'bg-white border-slate-200 text-slate-800'
       }`}>
-        <div className="flex items-center gap-3">
-          <div className="p-3 bg-red-600 text-white rounded-2xl font-black shadow-3xs shrink-0">
-            <ShoppingBag className="w-6 h-6" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-red-100 text-red-700">
-                YUK BELANJA ONLINE
-              </span>
-              {counts.menunggu > 0 && (
-                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-500 text-white animate-bounce">
-                  🔥 {counts.menunggu} Pesanan Baru!
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="p-2.5 sm:p-3 bg-red-600 text-white rounded-2xl font-black shadow-3xs shrink-0">
+              <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-red-100 text-red-700">
+                  YUK BELANJA ONLINE
                 </span>
-              )}
+                {counts.menunggu > 0 && (
+                  <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-500 text-white animate-bounce">
+                    🔥 {counts.menunggu} Pesanan Baru!
+                  </span>
+                )}
+              </div>
+              <h2 className="text-base font-black tracking-tight mt-0.5 truncate">
+                Kelola Pesanan Online Pembeli
+              </h2>
+              <p className="text-xs text-slate-500 line-clamp-1 sm:line-clamp-none">
+                Terima pesanan online dari pembeli sekitar toko dan selesaikan dengan otomatis potong stok.
+              </p>
             </div>
-            <h2 className="text-base font-black tracking-tight mt-0.5">
-              Kelola Pesanan Online Pembeli
-            </h2>
-            <p className="text-xs text-slate-500">
-              Terima pesanan online dari pembeli sekitar toko dan selesaikan dengan otomatis potong stok.
-            </p>
-            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 shadow-2xs">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>Firebase Cloud Sinkron:</span>
-                <span className="font-mono font-black">{activeStoreId}</span>
-              </span>
-            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 shadow-2xs">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span>Firebase Cloud Sinkron:</span>
+              <span className="font-mono font-black">{activeStoreId}</span>
+            </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+        {/* ACTION BUTTONS: GRID / FLEX WRAP YANG RAPI DALAM MODE LANDSCAPE MAUPUN PORTRAIT */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:flex md:flex-wrap items-center gap-2 pt-2 border-t border-slate-100 dark:border-zinc-800">
           <button
             type="button"
             onClick={handleRefreshCloud}
             disabled={isRefreshingCloud}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs active:scale-95 ${
+            className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs active:scale-95 ${
               isRefreshingCloud
                 ? 'bg-blue-100 border-blue-300 text-blue-700'
                 : 'bg-blue-600 hover:bg-blue-700 text-white border-blue-600'
             }`}
             title="Tarik & Cek Seluruh Pesanan Terbaru dari Firebase Cloud Sekarang"
           >
-            <RefreshCw className={`w-4 h-4 ${isRefreshingCloud ? 'animate-spin' : ''}`} />
-            <span>{isRefreshingCloud ? 'Memeriksa Cloud...' : 'Tarik Pesanan Cloud'}</span>
+            <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${isRefreshingCloud ? 'animate-spin' : ''}`} />
+            <span className="truncate">{isRefreshingCloud ? 'Memeriksa Cloud...' : 'Tarik Pesanan Cloud'}</span>
           </button>
 
           <button
@@ -627,23 +631,23 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
               setWhatsAppParseError('');
               setIsWhatsAppImportOpen(true);
             }}
-            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs active:scale-95"
+            className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs active:scale-95"
             title="Tempel teks chat pesanan dari WhatsApp pelanggan untuk otomatis dimasukkan ke daftar pesanan"
           >
-            <FileText className="w-4 h-4" />
-            <span>Tempel dari WhatsApp</span>
+            <FileText className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Tempel dari WhatsApp</span>
           </button>
 
           <button
             type="button"
             onClick={() => setIsPromoBannerModalOpen(true)}
-            className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shadow-3xs active:scale-95"
+            className="px-3 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-3xs active:scale-95"
             title="Pasang & Kelola Banner Iklan / Promo untuk Tampilan Belanja Pembeli"
           >
-            <ImageIcon className="w-4 h-4" />
-            <span>Pasang / Kelola Banner Iklan</span>
+            <ImageIcon className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Pasang / Kelola Banner Iklan</span>
             {activePromoCount > 0 && (
-              <span className="bg-slate-950 text-amber-300 text-[10px] font-black px-1.5 py-0.2 rounded-full ml-0.5">
+              <span className="bg-slate-950 text-amber-300 text-[10px] font-black px-1.5 py-0.2 rounded-full ml-0.5 shrink-0">
                 {activePromoCount}
               </span>
             )}
@@ -653,25 +657,25 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
             <button
               type="button"
               onClick={onOpenCustomerPreview}
-              className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-3xs active:scale-95"
+              className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-3xs active:scale-95"
             >
-              <Eye className="w-4 h-4" />
-              <span>Buka Portal Belanja Pembeli</span>
+              <Eye className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">Buka Portal Belanja Pembeli</span>
             </button>
           )}
 
           <button
             type="button"
             onClick={copyOnlineStoreLink}
-            className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+            className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
               copiedLink 
                 ? 'bg-emerald-600 text-white border-emerald-600' 
                 : hologramMode ? 'bg-zinc-800 border-zinc-700 text-zinc-200' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
             }`}
             title="Salin Link Toko Online Publik untuk Dibagikan ke Pelanggan"
           >
-            {copiedLink ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-            <span>{copiedLink ? 'Link Tersalin!' : 'Salin Link Toko'}</span>
+            {copiedLink ? <Check className="w-3.5 h-3.5 shrink-0" /> : <Copy className="w-3.5 h-3.5 shrink-0" />}
+            <span className="truncate">{copiedLink ? 'Link Tersalin!' : 'Salin Link Toko'}</span>
           </button>
 
           <button
@@ -680,11 +684,11 @@ export const PesananOnlineManager: React.FC<PesananOnlineManagerProps> = ({
               setCustomLinkInput(config?.customDomainOnlineStore || '');
               setIsLinkModalOpen(true);
             }}
-            className="px-3 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-200 border border-slate-200 dark:border-zinc-700 transition-all cursor-pointer flex items-center gap-1.5"
+            className="px-3 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-200 border border-slate-200 dark:border-zinc-700 transition-all cursor-pointer flex items-center justify-center gap-1.5"
             title="Lihat Link Lengkap & Barcode QR Code Toko"
           >
-            <QrCode className="w-4 h-4 text-red-600" />
-            <span className="hidden sm:inline">Info &amp; QR Link</span>
+            <QrCode className="w-3.5 h-3.5 text-red-600 shrink-0" />
+            <span className="truncate">Info &amp; QR Link</span>
           </button>
         </div>
       </div>

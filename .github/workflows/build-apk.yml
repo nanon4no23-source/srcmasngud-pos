@@ -1,4 +1,4 @@
-name: Build Android APK (SRC MASNGUD)
+name: Build Android APK (Kasir & Portal Pembeli)
 
 on:
   push:
@@ -11,8 +11,11 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build Android APK
+  # =======================================================
+  # JOB 1: BUILD APK APLIKASI KASIR TOKO (com.srcmasngud.kasir)
+  # =======================================================
+  build-kasir:
+    name: Build APK Kasir Toko
     runs-on: ubuntu-latest
 
     steps:
@@ -30,18 +33,16 @@ jobs:
             fi
           done
           find . -path "*/assets/public/*.zip" -delete 2>/dev/null || true
-          echo "=== STRUKTUR SETELAH PEMERIKSAAN ==="
-          ls -la
 
-      - name: 🔍 Deteksi Lokasi Proyek (Root atau Subfolder)
+      - name: 🔍 Deteksi Lokasi Proyek Kasir (Root atau Subfolder)
         id: locate-project
         run: |
-          GRADLEW_PATH=$(find . -maxdepth 4 -name "gradlew" -not -path "*/node_modules/*" | head -n 1)
+          GRADLEW_PATH=$(find . -maxdepth 4 -name "gradlew" -path "*/android/*" -not -path "*/android-portal-pembeli/*" -not -path "*/node_modules/*" | head -n 1)
           if [ -n "$GRADLEW_PATH" ]; then
             ANDROID_DIR=$(dirname "$GRADLEW_PATH")
             WORKDIR=$(dirname "$ANDROID_DIR")
             echo "workdir=$WORKDIR" >> $GITHUB_OUTPUT
-            echo "Folder proyek ditemukan di: $WORKDIR (android ada di: $ANDROID_DIR)"
+            echo "Folder proyek Kasir ditemukan di: $WORKDIR (android ada di: $ANDROID_DIR)"
           else
             echo "workdir=." >> $GITHUB_OUTPUT
             echo "Menggunakan direktori root (.)"
@@ -74,36 +75,6 @@ jobs:
           echo "android.useAndroidX=true" >> ~/.gradle/gradle.properties
           echo "android.builder.sdkDownload=true" >> ~/.gradle/gradle.properties
 
-      - name: 🔧 Auto-Patch Kompatibilitas Kode & Duplicate Classes
-        working-directory: ${{ steps.locate-project.outputs.workdir }}
-        run: |
-          echo "=== MENYELARASKAN FILE GRADLE KE JAVA 21 & SDK 35 ==="
-          if [ -d "android" ]; then
-            find android/ -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i 's/JavaVersion\.VERSION_1_8/JavaVersion.VERSION_21/g' {} + || true
-            find android/ -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i 's/JavaVersion\.VERSION_17/JavaVersion.VERSION_21/g' {} + || true
-            find android/ -type f -name "variables.gradle" -exec sed -i 's/compileSdkVersion = [0-9]\+/compileSdkVersion = 35/g' {} + || true
-            find android/ -type f -name "variables.gradle" -exec sed -i 's/targetSdkVersion = [0-9]\+/targetSdkVersion = 35/g' {} + || true
-            find android/ -type f -name "*.java" -not -path "*/build/*" -exec sed -i 's/Build\.VERSION_CODES\.VANILLA_ICE_CREAM/35/g' {} + || true
-            find android/ -type f -name "MainActivity.java" -exec sed -i 's/MainActivity\.super\.onBackPressed();/finish();/g' {} + || true
-          fi
-          
-          # Hapus duplikasi kotlin-stdlib
-          python3 -c '
-          import glob
-          for f in glob.glob("android/**/build.gradle", recursive=True):
-              with open(f, "r", encoding="utf-8") as file:
-                  c = file.read()
-              if "kotlin-stdlib-jdk7" not in c:
-                  c += "\nconfigurations.all {\n    exclude group: \"org.jetbrains.kotlin\", module: \"kotlin-stdlib-jdk7\"\n    exclude group: \"org.jetbrains.kotlin\", module: \"kotlin-stdlib-jdk8\"\n}\n"
-                  with open(f, "w", encoding="utf-8") as file:
-                      file.write(c)
-                  print("Patched duplicate kotlin exclusion in:", f)
-          '
-
-          if [ -d "android/app" ] && [ ! -f "android/app/google-services.json" ]; then
-            find android/app/ -name "build.gradle" -exec sed -i '/apply plugin:.*google-services.*/d' {} + || true
-          fi
-
       - name: 📦 Install Node Dependencies
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
@@ -120,29 +91,165 @@ jobs:
           fi
           find android/ -path "*/assets/public/*.zip" -delete 2>/dev/null || true
 
+      - name: 🔧 Auto-Patch Kompatibilitas AGP 8.7.3 & Java 21
+        working-directory: ${{ steps.locate-project.outputs.workdir }}
+        run: |
+          echo "=== PENYESUAIAN AGP DAN CAPACITOR-ANDROID ==="
+          # Arahkan capacitor-android ke submodule lokal agar bebas bentrok versi
+          if [ -d "android/capacitor-android" ]; then
+            cat << 'EOF' > android/capacitor.settings.gradle
+include ':capacitor-android'
+project(':capacitor-android').projectDir = new File('./capacitor-android')
+EOF
+          fi
+
+          # Samakan semua versi Android Gradle Plugin ke 8.7.3
+          find . -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i "s/classpath ['\"]com\.android\.tools\.build:gradle:[^'\"]*['\"]/classpath 'com.android.tools.build:gradle:8.7.3'/g" {} + || true
+
+          # Sesuaikan Java 21 dan compileSdk 35
+          if [ -d "android" ]; then
+            find android/ -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i 's/JavaVersion\.VERSION_1_8/JavaVersion.VERSION_21/g' {} + || true
+            find android/ -type f -name "*.gradle" -not -path "*/build/*" -exec sed -i 's/JavaVersion\.VERSION_17/JavaVersion.VERSION_21/g' {} + || true
+            find android/ -type f -name "variables.gradle" -exec sed -i 's/compileSdkVersion = [0-9]\+/compileSdkVersion = 35/g' {} + || true
+            find android/ -type f -name "variables.gradle" -exec sed -i 's/targetSdkVersion = [0-9]\+/targetSdkVersion = 35/g' {} + || true
+            find android/ -type f -name "*.java" -not -path "*/build/*" -exec sed -i 's/Build\.VERSION_CODES\.VANILLA_ICE_CREAM/35/g' {} + || true
+            find android/ -type f -name "MainActivity.java" -exec sed -i 's/MainActivity\.super\.onBackPressed();/finish();/g' {} + || true
+          fi
+
+          # Hapus duplikasi kotlin-stdlib
+          python3 -c '
+          import glob
+          for f in glob.glob("android/**/build.gradle", recursive=True):
+              with open(f, "r", encoding="utf-8") as file:
+                  c = file.read()
+              if "kotlin-stdlib-jdk7" not in c:
+                  c += "\nconfigurations.all {\n    exclude group: \"org.jetbrains.kotlin\", module: \"kotlin-stdlib-jdk7\"\n    exclude group: \"org.jetbrains.kotlin\", module: \"kotlin-stdlib-jdk8\"\n}\n"
+                  with open(f, "w", encoding="utf-8") as file:
+                      file.write(c)
+                  print("Patched duplicate kotlin exclusion in:", f)
+          ' || true
+
+          if [ -d "android/app" ] && [ ! -f "android/app/google-services.json" ]; then
+            find android/app/ -name "build.gradle" -exec sed -i '/apply plugin:.*google-services.*/d' {} + || true
+          fi
+
       - name: 🔑 Berikan Izin Eksekusi Gradle Wrapper
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
           chmod +x ./android/gradlew || true
 
-      - name: 🔨 Compile & Build APK Android
+      - name: 🔨 Compile & Build APK Kasir Android
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
           cd android
           chmod +x ./gradlew
           ./gradlew assembleDebug --no-daemon --console=plain
 
-      - name: 📂 Kumpulkan & Gandakan File APK
+      - name: 📂 Kumpulkan & Gandakan File APK Kasir
         working-directory: ${{ steps.locate-project.outputs.workdir }}
         run: |
-          mkdir -p output-apk
-          find android/app/build/outputs/apk/ -name "*.apk" -exec cp {} output-apk/ \; || true
-          echo "=== BERKAS APK HASIL BUILD ==="
-          ls -lh output-apk/
+          mkdir -p output-apk-kasir
+          find android/app/build/outputs/apk/ -name "*.apk" -exec cp {} output-apk-kasir/srcmasngud-kasir.apk \; || true
+          echo "=== BERKAS APK KASIR HASIL BUILD ==="
+          ls -lh output-apk-kasir/
 
-      - name: 🚀 Unggah File APK ke Artifacts GitHub
+      - name: 🚀 Unggah File APK Kasir ke Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: srcmasngud-kasir-apk
-          path: ${{ steps.locate-project.outputs.workdir }}/output-apk/*
+          name: 1-APK-KASIR-SRC-MASNGUD
+          path: ${{ steps.locate-project.outputs.workdir }}/output-apk-kasir/*
+          retention-days: 30
+
+  # =======================================================
+  # JOB 2: BUILD APK PORTAL PEMBELI ONLINE (com.srcmasngud.pembeli)
+  # =======================================================
+  build-portal-pembeli:
+    name: Build APK Portal Pembeli (Yuk Belanja)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Kode Repositori
+        uses: actions/checkout@v4
+
+      - name: 📦 Ekstrak Berkas ZIP (Jika Ada di Repositori)
+        run: |
+          echo "=== MEMERIKSA BERKAS DI REPOSITORI ==="
+          ls -la
+          for z in $(find . -maxdepth 3 -name "*.zip" -not -path "*/node_modules/*"); do
+            if [ -f "$z" ]; then
+              echo "Mengekstrak berkas $z..."
+              unzip -q -o "$z" || true
+            fi
+          done
+
+      - name: 🔍 Cari Direktori Proyek Android Portal Pembeli
+        id: locate-portal
+        run: |
+          PORTAL_DIR=$(find . -maxdepth 3 -type d -name "android-portal-pembeli" | head -n 1)
+          if [ -n "$PORTAL_DIR" ] && [ -f "$PORTAL_DIR/gradlew" ]; then
+            echo "portaldir=$PORTAL_DIR" >> $GITHUB_OUTPUT
+            echo "Folder Android Portal Pembeli ditemukan di: $PORTAL_DIR"
+          else
+            echo "portaldir=android-portal-pembeli" >> $GITHUB_OUTPUT
+            echo "Menggunakan default android-portal-pembeli"
+          fi
+
+      - name: ☕ Setup Java JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: 🤖 Setup Android SDK (API 35 & 34)
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-35 platforms;android-34 build-tools;35.0.0 build-tools;34.0.0'
+
+      - name: 📜 Setujui Lisensi Android SDK
+        run: |
+          yes | sdkmanager --licenses || true
+
+      - name: ⚙️ Optimasi Konfigurasi Gradle
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8" >> ~/.gradle/gradle.properties
+          echo "android.useAndroidX=true" >> ~/.gradle/gradle.properties
+          echo "android.builder.sdkDownload=true" >> ~/.gradle/gradle.properties
+
+      - name: 🔧 Auto-Patch Resource Warna & AGP Portal Pembeli
+        working-directory: ${{ steps.locate-portal.outputs.portaldir }}
+        run: |
+          echo "=== MEMASTIKAN RESOURCE IC_LAUNCHER TERSEDIA ==="
+          find . -type d -name "values" -not -path "*/build/*" | while read -r vdir; do
+            if [ ! -f "$vdir/ic_launcher_background.xml" ]; then
+              echo '<?xml version="1.0" encoding="utf-8"?><resources><color name="ic_launcher_background">#FFFFFF</color></resources>' > "$vdir/ic_launcher_background.xml"
+            fi
+            if [ -f "$vdir/colors.xml" ] && ! grep -q "ic_launcher_background" "$vdir/colors.xml"; then
+              sed -i 's/<\/resources>/    <color name="ic_launcher_background">#FFFFFF<\/color>\n<\/resources>/' "$vdir/colors.xml" || true
+            fi
+          done
+
+      - name: 🔑 Berikan Izin Eksekusi Gradle Wrapper
+        working-directory: ${{ steps.locate-portal.outputs.portaldir }}
+        run: |
+          chmod +x ./gradlew || true
+
+      - name: 🔨 Compile & Build APK Portal Pembeli
+        working-directory: ${{ steps.locate-portal.outputs.portaldir }}
+        run: |
+          ./gradlew assembleDebug --no-daemon --console=plain
+
+      - name: 📂 Kumpulkan & Gandakan File APK Portal Pembeli
+        working-directory: ${{ steps.locate-portal.outputs.portaldir }}
+        run: |
+          mkdir -p output-apk-pembeli
+          find app/build/outputs/apk/ -name "*.apk" -exec cp {} output-apk-pembeli/srcmasngud-pembeli.apk \; || true
+          echo "=== BERKAS APK PORTAL PEMBELI HASIL BUILD ==="
+          ls -lh output-apk-pembeli/
+
+      - name: 🚀 Unggah File APK Portal Pembeli ke Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: 2-APK-PORTAL-PEMBELI-BELANJA
+          path: ${{ steps.locate-portal.outputs.portaldir }}/output-apk-pembeli/*
           retention-days: 30
